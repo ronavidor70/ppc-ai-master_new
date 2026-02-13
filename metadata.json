@@ -1,0 +1,8 @@
+{
+  "name": "PPC AI Master",
+  "description": "An autonomous AI-powered PPC manager for small businesses that handles strategy, copywriting, image generation, and campaign optimization through a simple chat interface.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
