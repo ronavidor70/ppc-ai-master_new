@@ -8,7 +8,7 @@ import OpenAI from 'openai';
 import crypto from 'crypto';
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 3000;
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -1821,23 +1821,6 @@ app.get('/auth/shopify/logout', (req, res) => {
   res.json({ success: true });
 });
 
-const HOST = process.env.HOST || '0.0.0.0';
-app.listen(Number(PORT), HOST, () => {
-  console.log(`🚀 Backend server running on http://${HOST}:${PORT}`);
-  console.log(`📝 Facebook OAuth callback URL: ${facebookRedirectUri || 'NOT SET'}`);
-  console.log(`🔗 Facebook OAuth URL: http://localhost:${PORT}/auth/facebook`);
-  console.log(`🛒 Shopify OAuth callback URL: ${SHOPIFY_REDIRECT_URI}`);
-  console.log(`🔗 Shopify OAuth URL: http://localhost:${PORT}/auth/shopify`);
-  
-  if (!facebookAppId || !facebookAppSecret || !facebookRedirectUri) {
-    console.warn('⚠️  WARNING: Facebook OAuth is not fully configured!');
-    console.warn('   Please check your .env file and ensure all required variables are set.');
-  }
-  
-  if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET) {
-    console.warn('⚠️  WARNING: Shopify OAuth is not fully configured!');
-    console.warn('   Please check your .env file and ensure SHOPIFY_API_KEY and SHOPIFY_API_SECRET are set.');
-  } else {
-    console.log('✅ Shopify OAuth is configured');
-  }
+app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });
