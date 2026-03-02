@@ -52,6 +52,7 @@ export const PURCHASE_ACTION_TYPES = new Set([
  */
 export const WHATSAPP_ACTION_TYPES = new Set([
   'onsite_conversion.messaging_first_reply',
+  'onsite_conversion.messaging_conversation_started_7d',
   'messaging_conversation_started_7d',
   'messaging_conversation_started',
   'omni_click_to_whatsapp',

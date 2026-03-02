@@ -41,7 +41,9 @@ export const useData = () => {
   return context;
 };
 
-// Helper for date ranges
+// Helper for date ranges.
+// Note: dates are built in the browser's local timezone. For 1:1 match with Meta Ads Manager
+// (which uses the ad account's timezone), consider building start/end on the server using the account's timezone_name.
 const getDateRange = (rangeType: string, customStart?: string, customEnd?: string) => {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
@@ -346,13 +348,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ...campaign,
             performance: {
               spend: processedInsights.spend || 0,
+              impressions: processedInsights.impressions ?? 0,
+              clicks: processedInsights.clicks ?? 0,
               leads: processedInsights.leads || 0,
               purchases: processedInsights.purchases || 0,
               revenue: processedInsights.revenue || 0,
               roas: processedInsights.roas || 0,
               ctr: processedInsights.ctr || 0,
               cpl: processedInsights.cpl || 0,
-              optimizations: campaign.performance.optimizations || 0
+              optimizations: campaign.performance?.optimizations || 0
             },
             conversions: processedInsights.conversions || {}
           };
@@ -379,11 +383,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
         }
         
-        // #region agent log
-        const _rawSpend = rawAccountInsights?.spend ?? rawAccountInsights?.summary?.spend;
-        const _rawConv = rawAccountInsights?.unified_metrics ? (rawAccountInsights.unified_metrics.leads + rawAccountInsights.unified_metrics.whatsapp + rawAccountInsights.unified_metrics.purchases) : null;
-        fetch('http://127.0.0.1:7243/ingest/ba8235b7-5f86-4ac1-98ab-6e2a27ae27e9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ef0206'},body:JSON.stringify({sessionId:'ef0206',location:'DataContext.tsx:raw-response',message:'Raw account insights from server',data:{accountId:currentAccountId,startDate,endDate,rawKeys:Object.keys(rawAccountInsights||{}),rawSpend:_rawSpend,rawConversions:_rawConv,dailyLength:rawAccountInsights?.daily?.length},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
-        // #endregion
         const processedAccountInsights = parseMetaInsights(rawAccountInsights);
         console.log(`📊 Processed insights:`, {
           spend: processedAccountInsights.spend,
@@ -394,10 +393,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           revenue: processedAccountInsights.revenue,
           conversions: processedAccountInsights.conversions
         });
-        // #region agent log
-        const _totalConv = processedAccountInsights.conversions?.total ?? (processedAccountInsights.conversions?.lead ?? 0) + (processedAccountInsights.conversions?.whatsapp ?? 0) + (processedAccountInsights.conversions?.purchase ?? 0);
-        fetch('http://127.0.0.1:7243/ingest/ba8235b7-5f86-4ac1-98ab-6e2a27ae27e9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ef0206'},body:JSON.stringify({sessionId:'ef0206',location:'DataContext.tsx:after-parse',message:'After parseMetaInsights',data:{spend:processedAccountInsights.spend,conversionsTotal:_totalConv,conversions:processedAccountInsights.conversions},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
         setAccountInsights(processedAccountInsights);
         
         let chartDataToCache: any[] = [];

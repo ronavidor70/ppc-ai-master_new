@@ -820,8 +820,8 @@ const PURCHASE_TYPES_SERVER = new Set([
 ]);
 
 const WHATSAPP_TYPES_SERVER = new Set([
-  'onsite_conversion.messaging_first_reply', 'messaging_conversation_started_7d',
-  'messaging_conversation_started', 'omni_click_to_whatsapp', 'whatsapp_message',
+  'onsite_conversion.messaging_first_reply', 'onsite_conversion.messaging_conversation_started_7d',
+  'messaging_conversation_started_7d', 'messaging_conversation_started', 'omni_click_to_whatsapp', 'whatsapp_message',
 ]);
 
 function isWhatsAppServer(a: any): boolean {
@@ -943,16 +943,15 @@ function processOneCampaignInsights(data: any, currency: string): any {
     const finalReach       = parseInt(summary.reach || '0');
     const finalFrequency   = parseFloat(summary.frequency || '0');
     const unified_metrics  = calculateUnifiedMetrics(finalActions);
-    // Count leads from ALL lead variants (not just the first array entry)
-    const totalLeads = countLeads(finalActions);
+    // Single source of truth: leads from unified_metrics (aligned with Ads Manager lead/contact/WhatsApp split)
     const conversions = unified_metrics.leads + unified_metrics.whatsapp + unified_metrics.purchases;
     return {
       spend: finalSpend, impressions: finalImpressions, clicks: finalClicks,
       ctr: finalCtr, cpc: finalCpc, cpm: finalCpm,
-      leads: totalLeads, conversions, unified_metrics,
+      leads: unified_metrics.leads, conversions, unified_metrics,
       actions: finalActions, action_values: finalActionValues,
       reach: finalReach, frequency: finalFrequency,
-      cpl: totalLeads > 0 ? finalSpend / totalLeads : 0,
+      cpl: unified_metrics.leads > 0 ? finalSpend / unified_metrics.leads : 0,
       summary, currency, daily: data.data,
     };
   }
@@ -978,15 +977,14 @@ function processOneCampaignInsights(data: any, currency: string): any {
   const finalReach     = parseInt(firstRow.reach || '0');
   const finalFrequency = parseFloat(firstRow.frequency || '0');
   const unified_metrics = calculateUnifiedMetrics(allActions);
-  const totalLeads      = countLeads(allActions);
   const conversions     = unified_metrics.leads + unified_metrics.whatsapp + unified_metrics.purchases;
   return {
     spend: totalSpend, impressions: totalImpressions, clicks: totalClicks,
     ctr: finalCtr, cpc: finalCpc, cpm: finalCpm,
-    leads: totalLeads, conversions, unified_metrics,
+    leads: unified_metrics.leads, conversions, unified_metrics,
     actions: allActions, action_values: allActionValues,
     reach: finalReach, frequency: finalFrequency,
-    cpl: totalLeads > 0 ? totalSpend / totalLeads : 0,
+    cpl: unified_metrics.leads > 0 ? totalSpend / unified_metrics.leads : 0,
     summary: {}, currency, daily: data.data,
   };
 }
@@ -1047,7 +1045,7 @@ app.get('/api/facebook/campaigns/:campaignId/insights', async (req, res) => {
 
     // action_breakdowns=action_type is intentionally absent – see META_FIELDS comment above.
     // Attribution windows match Ads Manager default (7d_click + 1d_view).
-    const url = `https://graph.facebook.com/v19.0/${campaignId}/insights?fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    const url = `https://graph.facebook.com/v19.0/${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
     
     console.log(`🔍 Fetching insights for campaign ${campaignId} from ${startDate} to ${endDate}...`);
     console.log(`🌍 Timezone: ${timezone}`);
@@ -1096,7 +1094,7 @@ app.post('/api/facebook/campaigns/insights/batch', async (req, res) => {
     // action_breakdowns=action_type excluded (see META_FIELDS). Attribution = Ads Manager default.
     const batch = ids.map((campaignId: string) => ({
       method: 'GET',
-      relative_url: `${campaignId}/insights?fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true`
+      relative_url: `${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true`
     }));
     const body = new URLSearchParams({ access_token: accessToken, batch: JSON.stringify(batch) }).toString();
     const timeSinceLast = Date.now() - lastRequestTime;
@@ -1182,8 +1180,8 @@ app.get('/api/facebook/adaccounts/:accountId/insights', async (req, res) => {
 
     const timeRange = JSON.stringify({ since: startDate, until: endDate });
 
-    // action_breakdowns=action_type excluded (see META_FIELDS). Attribution = Ads Manager default.
-    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    // level=account for 1:1 alignment with Ads Manager account-level totals.
+    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
     
     console.log(`🔍 Fetching insights for account ${accountId} from ${startDate} to ${endDate}...`);
     console.log(`🌍 Timezone: ${timezone}`);
@@ -1233,6 +1231,69 @@ app.get('/api/facebook/adaccounts/:accountId/insights', async (req, res) => {
     }
     
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Debug: Meta Insights vs Ads Manager comparison (development only)
+app.get('/api/debug/meta-insights', async (req, res) => {
+  if (process.env.NODE_ENV === 'production' && process.env.DEBUG_META_INSIGHTS !== 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  const accessToken = (req.user as any).accessToken;
+  const accountId = (req.query.accountId as string)?.replace(/^act_/, '') || req.query.accountId;
+  const startDate = req.query.startDate as string;
+  const endDate = req.query.endDate as string;
+  if (!accountId || !startDate || !endDate) {
+    return res.status(400).json({
+      error: 'accountId, startDate and endDate are required',
+      example: '/api/debug/meta-insights?accountId=123&startDate=2025-02-01&endDate=2025-02-28',
+    });
+  }
+  try {
+    let currency = 'USD';
+    try {
+      const accountData = await fetchWithRateLimit(
+        `https://graph.facebook.com/v19.0/act_${accountId}?fields=timezone_name,currency&access_token=${accessToken}`,
+        {},
+        true
+      );
+      if (accountData.currency) currency = accountData.currency;
+    } catch (_) {}
+    const timeRange = JSON.stringify({ since: startDate, until: endDate });
+    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    const data = await fetchWithRateLimit(url, {}, false);
+    if (data.error) {
+      return res.status(400).json({ error: data.error.message });
+    }
+    const result = processOneCampaignInsights(data, currency);
+    const um = result.unified_metrics || {};
+    const totalConv = (um.leads || 0) + (um.whatsapp || 0) + (um.purchases || 0);
+    res.json({
+      accountId: `act_${accountId}`,
+      timeRange: { startDate, endDate },
+      total_spend: result.spend,
+      total_impressions: result.impressions,
+      total_clicks: result.clicks,
+      total_conversions: {
+        leads: um.leads ?? 0,
+        whatsapp: um.whatsapp ?? 0,
+        purchases: um.purchases ?? 0,
+        total: totalConv,
+      },
+      cost_per_result: {
+        lead: (um.leads ?? 0) > 0 ? result.spend / (um.leads ?? 0) : null,
+        whatsapp: (um.whatsapp ?? 0) > 0 ? result.spend / (um.whatsapp ?? 0) : null,
+        purchase: (um.purchases ?? 0) > 0 ? result.spend / (um.purchases ?? 0) : null,
+        total: totalConv > 0 ? result.spend / totalConv : null,
+      },
+      currency,
+      _rawSummary: result.summary && Object.keys(result.summary).length ? 'present' : 'aggregated from daily rows',
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 

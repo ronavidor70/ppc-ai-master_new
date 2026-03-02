@@ -141,11 +141,13 @@ const Dashboard: React.FC = () => {
 
       return {
         spend: acc.spend + (c.performance?.spend || 0),
+        impressions: acc.impressions + (c.performance?.impressions ?? 0),
+        clicks: acc.clicks + (c.performance?.clicks ?? 0),
         conversions: acc.conversions + currentConversions,
         revenue: acc.revenue + (c.performance?.revenue || 0),
         optimizations: acc.optimizations + (c.performance?.optimizations || 0)
       };
-    }, { spend: 0, conversions: 0, revenue: 0, optimizations: 0 });
+    }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, optimizations: 0 });
   };
 
   const dynamicStats = getDynamicStats();

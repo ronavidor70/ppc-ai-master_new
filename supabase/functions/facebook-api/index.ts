@@ -17,8 +17,8 @@ const PURCHASE_TYPES = new Set([
   'fb_mobile_purchase', 'fb_offsite_conversion_purchase',
 ])
 const WHATSAPP_TYPES = new Set([
-  'onsite_conversion.messaging_first_reply', 'messaging_conversation_started_7d',
-  'messaging_conversation_started', 'omni_click_to_whatsapp', 'whatsapp_message',
+  'onsite_conversion.messaging_first_reply', 'onsite_conversion.messaging_conversation_started_7d',
+  'messaging_conversation_started_7d', 'messaging_conversation_started', 'omni_click_to_whatsapp', 'whatsapp_message',
 ])
 
 function isWhatsAppEdge(a: any): boolean {
@@ -477,7 +477,7 @@ serve(async (req) => {
       const timeRange = JSON.stringify({ since: startDate, until: endDate })
 
       // action_breakdowns=action_type excluded (see EDGE_META_FIELDS).
-      const insightsUrl = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights?fields=${EDGE_META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${EDGE_META_ATTR_WIN}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`
+      const insightsUrl = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights?level=account&fields=${EDGE_META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${EDGE_META_ATTR_WIN}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`
       
       const data = await fetchWithRateLimit(insightsUrl, {}, false)
       
@@ -549,7 +549,6 @@ serve(async (req) => {
       }
 
       const unified_metrics = buildUnifiedMetricsEdge(finalActions)
-      const totalLeads      = countLeadsEdge(finalActions)
       const conversions     = unified_metrics.leads + unified_metrics.whatsapp + unified_metrics.purchases
 
       return new Response(
@@ -560,14 +559,14 @@ serve(async (req) => {
           ctr: finalCtr,
           cpc: finalCpc,
           cpm: finalCpm,
-          leads: totalLeads,
+          leads: unified_metrics.leads,
           conversions,
           unified_metrics,
           actions: finalActions,
           action_values: finalActionValues,
           reach: finalReach,
           frequency: finalFrequency,
-          cpl: totalLeads > 0 ? finalSpend / totalLeads : 0,
+          cpl: unified_metrics.leads > 0 ? finalSpend / unified_metrics.leads : 0,
           summary: summaryOut,
           currency,
           daily: data.data,
@@ -618,7 +617,7 @@ serve(async (req) => {
       const timeRange = JSON.stringify({ since: startDate, until: endDate })
 
       // action_breakdowns=action_type excluded. Attribution = Ads Manager default.
-      const insightsUrl = `https://graph.facebook.com/v19.0/${campaignId}/insights?fields=${EDGE_META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${EDGE_META_ATTR_WIN}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`
+      const insightsUrl = `https://graph.facebook.com/v19.0/${campaignId}/insights?level=campaign&fields=${EDGE_META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${EDGE_META_ATTR_WIN}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`
 
       const data = await fetchWithRateLimit(insightsUrl, {}, false)
 
@@ -667,18 +666,17 @@ serve(async (req) => {
       }
 
       const campUnified = buildUnifiedMetricsEdge(campActions)
-      const campLeads   = countLeadsEdge(campActions)
       const campConversions = campUnified.leads + campUnified.whatsapp + campUnified.purchases
 
       return new Response(
         JSON.stringify({
           spend: campSpend, impressions: campImpressions, clicks: campClicks,
           ctr: campCtr, cpc: campCpc, cpm: campCpm,
-          leads: campLeads, conversions: campConversions,
+          leads: campUnified.leads, conversions: campConversions,
           unified_metrics: campUnified,
           actions: campActions, action_values: campActionValues,
           reach: campReach, frequency: campFrequency,
-          cpl: campLeads > 0 ? campSpend / campLeads : 0,
+          cpl: campUnified.leads > 0 ? campSpend / campUnified.leads : 0,
           summary: campSummaryOut, currency, daily: data.data,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

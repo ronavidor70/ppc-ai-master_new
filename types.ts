@@ -91,6 +91,8 @@ export interface Campaign {
   conversions?: { [key: string]: number };
   performance: {
     spend: number;
+    impressions?: number;
+    clicks?: number;
     leads: number;
     purchases?: number;
     revenue?: number;
