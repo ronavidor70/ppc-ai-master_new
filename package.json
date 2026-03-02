@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
+    "start": "tsx server/index.ts",
     "dev:full": "concurrently \"npm run dev\" \"npm run server\""
   },
   "dependencies": {
@@ -20,7 +21,8 @@
     "passport-facebook": "^3.0.0",
     "express-session": "^1.17.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "tsx": "^4.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
@@ -32,7 +34,6 @@
     "@types/passport-facebook": "^3.0.4",
     "@types/express-session": "^1.17.10",
     "@types/cors": "^2.8.17",
-    "tsx": "^4.7.0",
     "concurrently": "^8.2.2"
   }
 }

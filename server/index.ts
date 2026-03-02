@@ -37,9 +37,10 @@ console.log('Facebook App Secret:', facebookAppSecret ? '***' + facebookAppSecre
 console.log('Facebook Redirect URI:', facebookRedirectUri || '❌ NOT SET');
 console.log('Session Secret:', sessionSecret ? 'SET' : '❌ NOT SET');
 
-// CORS - אפשר גישה מ-frontend
+// CORS - אפשר גישה מ-frontend (ב-production השתמש ב-FRONTEND_URL או CORS_ORIGIN)
+const corsOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:3000';
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: corsOrigin,
   credentials: true
 }));
 
@@ -1820,8 +1821,9 @@ app.get('/auth/shopify/logout', (req, res) => {
   res.json({ success: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Backend server running on http://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(Number(PORT), HOST, () => {
+  console.log(`🚀 Backend server running on http://${HOST}:${PORT}`);
   console.log(`📝 Facebook OAuth callback URL: ${facebookRedirectUri || 'NOT SET'}`);
   console.log(`🔗 Facebook OAuth URL: http://localhost:${PORT}/auth/facebook`);
   console.log(`🛒 Shopify OAuth callback URL: ${SHOPIFY_REDIRECT_URI}`);
