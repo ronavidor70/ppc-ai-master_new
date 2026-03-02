@@ -33,7 +33,7 @@ export const useTranslation = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads } = useData();
+  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads, dateRange, setDateRangeType, setCustomDateRange } = useData();
   const { t, lang } = useTranslation();
   const [activeTab, setActiveTab] = useState('dashboard');
   
@@ -43,6 +43,14 @@ const AppContent: React.FC = () => {
   
   useEffect(() => {
     // Sync with filtered campaigns from context
+    console.log(`🔄 App: Syncing campaigns from context. Count: ${filteredCampaigns.length}`);
+    if (filteredCampaigns.length > 0) {
+      console.log(`📊 App: First campaign sample:`, {
+        name: filteredCampaigns[0].name,
+        spend: filteredCampaigns[0].performance?.spend,
+        leads: filteredCampaigns[0].performance?.leads
+      });
+    }
     setCampaigns(filteredCampaigns);
   }, [filteredCampaigns]);
 
@@ -53,6 +61,27 @@ const AppContent: React.FC = () => {
     // Sync with leads from context
     setLeads(contextLeads);
   }, [contextLeads]);
+
+  // Hash routing support
+  useEffect(() => {
+    // Check initial hash
+    const hash = window.location.hash.replace('#', '');
+    if (hash && ['dashboard', 'campaigns', 'crm', 'creative-studio', 'landing-pages', 'glossary', 'billing', 'settings', 'account-setup', 'chat', 'campaign-wizard'].includes(hash)) {
+      setActiveTab(hash);
+    }
+
+    // Listen to hash changes
+    const handleHashChange = () => {
+      const newHash = window.location.hash.replace('#', '');
+      if (newHash && ['dashboard', 'campaigns', 'crm', 'creative-studio', 'landing-pages', 'glossary', 'billing', 'settings', 'account-setup', 'chat', 'campaign-wizard'].includes(newHash)) {
+        setActiveTab(newHash);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState<string | null>(null);
@@ -148,7 +177,8 @@ const AppContent: React.FC = () => {
             {activeTab === 'campaign-wizard' && <CampaignWizard onCampaignCreated={handleCampaignCreated} />}
             {activeTab === 'chat' && <ChatInterface onCampaignCreated={handleCampaignCreated} />}
             {activeTab === 'campaigns' && (
-              <div className="max-w-7xl mx-auto">
+              <div className="max-w-7xl mx-auto space-y-6">
+                {!selectedCampaign && <CampaignsDateRangePicker dateRange={dateRange} setDateRangeType={setDateRangeType} setCustomDateRange={setCustomDateRange} />}
                 {selectedCampaign ? <CampaignDetailView campaign={selectedCampaign} onBack={() => setSelectedCampaign(null)} onUpdate={updateCampaign} /> : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                     {campaigns.length === 0 && !isLoading ? (
@@ -260,9 +290,96 @@ const App: React.FC = () => {
   );
 };
 
+const timeRangeOptions = [
+  { value: 'yesterday', labelHe: 'אתמול', labelEn: 'Yesterday' },
+  { value: 'today', labelHe: 'היום', labelEn: 'Today' },
+  { value: 'last_7d', labelHe: '7 ימים אחרונים', labelEn: 'Last 7 Days' },
+  { value: 'last_30d', labelHe: '30 יום אחרונים', labelEn: 'Last 30 Days' },
+  { value: 'custom', labelHe: 'טווח תאריכים', labelEn: 'Date Range' },
+];
+
+const CampaignsDateRangePicker: React.FC<{
+  dateRange: { type: string; startDate: string; endDate: string };
+  setDateRangeType: (type: string) => void;
+  setCustomDateRange: (start: string, end: string) => void;
+}> = ({ dateRange, setDateRangeType, setCustomDateRange }) => {
+  const { lang } = useTranslation();
+  const [isCustomRange, setIsCustomRange] = React.useState(dateRange.type === 'custom');
+
+  React.useEffect(() => {
+    setIsCustomRange(dateRange.type === 'custom');
+  }, [dateRange.type]);
+
+  return (
+    <div className="flex flex-col gap-2 bg-white p-4 rounded-[24px] border border-slate-200 shadow-sm">
+      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+        {lang === 'he' ? 'טווח תאריכים' : 'Date Range'}
+      </span>
+      <div className="flex flex-col gap-2">
+        {dateRange.startDate && dateRange.endDate && (
+          <span className="text-[10px] text-slate-500">
+            {dateRange.startDate} → {dateRange.endDate}
+          </span>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {timeRangeOptions.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => {
+                setDateRangeType(option.value);
+                setIsCustomRange(option.value === 'custom');
+              }}
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                dateRange.type === option.value
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-100'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              {lang === 'he' ? option.labelHe : option.labelEn}
+            </button>
+          ))}
+        </div>
+        {isCustomRange && (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={dateRange.startDate}
+              onChange={(e) => setCustomDateRange(e.target.value, dateRange.endDate)}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-slate-800 border border-slate-200 outline-none focus:border-blue-500"
+            />
+            <span className="text-slate-400 font-bold">-</span>
+            <input
+              type="date"
+              value={dateRange.endDate}
+              onChange={(e) => setCustomDateRange(dateRange.startDate, e.target.value)}
+              max={new Date().toISOString().split('T')[0]}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-slate-800 border border-slate-200 outline-none focus:border-blue-500"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const CampaignCard = ({ campaign, onViewAnalytics, onDelete, onToggleStatus }: any) => {
   const { t, currency, lang } = useTranslation();
   const isActive = campaign.status === CampaignStatus.ACTIVE;
+  
+  // ✅ לוג לבדיקת הנתונים שמגיעים לקמפיין
+  React.useEffect(() => {
+    console.log(`🎴 CampaignCard rendered for: ${campaign.name}`, {
+      spend: campaign.performance?.spend,
+      leads: campaign.performance?.leads,
+      performance: campaign.performance
+    });
+  }, [campaign]);
+  
+  // ✅ פונקציה לעיצוב ערכים (המרת מטבע ופורמט) - כמו ב-Dashboard
+  const formatValue = (val: number) => {
+    if (lang === 'he') return Math.round(val * EXCHANGE_RATE).toLocaleString();
+    return val.toLocaleString();
+  };
   
   const platformIcons: Record<string, React.ReactNode> = {
     [Platform.GOOGLE]: <Icons.Google />,
@@ -321,11 +438,11 @@ const CampaignCard = ({ campaign, onViewAnalytics, onDelete, onToggleStatus }: a
       <div className="grid grid-cols-2 gap-4 my-6">
         <div>
           <p className="text-[10px] font-black text-slate-300 uppercase">{t('totalSpend')}</p>
-          <p className="font-black text-slate-800 text-lg">{currency}{campaign.performance.spend}</p>
+          <p className="font-black text-slate-800 text-lg">{currency}{formatValue(campaign.performance.spend || 0)}</p>
         </div>
         <div>
           <p className="text-[10px] font-black text-slate-300 uppercase">{t('totalLeads')}</p>
-          <p className="font-black text-slate-800 text-lg">{campaign.performance.leads}</p>
+          <p className="font-black text-slate-800 text-lg">{campaign.performance.leads || 0}</p>
         </div>
       </div>
 

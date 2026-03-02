@@ -136,3 +136,40 @@ export interface CampaignStrategy {
   targetAudience: string;
   reasoning: string;
 }
+
+export interface ShopifyConnection {
+  shop: string;
+  accessToken: string;
+  storeName?: string;
+  storeUrl?: string;
+  connectedAt?: string;
+}
+
+export interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+  price: string;
+  compareAtPrice?: string;
+  image?: string;
+  inventory?: number;
+  status: string;
+}
+
+export interface ShopifyOrder {
+  id: string;
+  orderNumber: number;
+  totalPrice: string;
+  currency: string;
+  createdAt: string;
+  lineItems: Array<{
+    title: string;
+    quantity: number;
+    price: string;
+  }>;
+  customer?: {
+    email: string;
+    firstName: string;
+    lastName: string;
+  };
+}

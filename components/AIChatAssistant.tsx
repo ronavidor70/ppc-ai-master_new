@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useTranslation } from '../App';
 import { Campaign, Lead } from '../types';
+import { config } from '../config';
 
 interface Message {
   id: string;
@@ -166,7 +167,7 @@ Respond in English, be professional and helpful. When discussing conversions, pr
     try {
       const systemPrompt = buildSystemPrompt();
       
-      const response = await fetch('http://localhost:5001/api/ai/chat', {
+      const response = await fetch(`${config.apiBaseUrl}/api/ai/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,13 +228,13 @@ Respond in English, be professional and helpful. When discussing conversions, pr
     try {
       switch (action.type) {
         case 'pauseCampaign':
-          await fetch(`http://localhost:5001/api/facebook/campaigns/${action.params.id}/pause`, {
+          await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/${action.params.id}/pause`, {
             method: 'POST',
             credentials: 'include'
           });
           break;
         case 'updateBudget':
-          await fetch(`http://localhost:5001/api/facebook/campaigns/${action.params.id}/budget`, {
+          await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/${action.params.id}/budget`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',

@@ -15,6 +15,8 @@ const Dashboard: React.FC = () => {
     accountInsights, 
     chartData, 
     isLoading, 
+    loadingStage,
+    loadingProgress,
     dateRange, 
     setDateRangeType, 
     setCustomDateRange,
@@ -24,8 +26,18 @@ const Dashboard: React.FC = () => {
     isConnected,
     filteredCampaigns,
     campaigns: totalCampaigns,
-    statusFilter
+    statusFilter,
+    error,
+    clearError
   } = useData();
+
+  const loadingStageLabels: Record<string, { he: string; en: string }> = {
+    campaigns: { he: 'טוען קמפיינים...', en: 'Loading campaigns...' },
+    insights: { he: 'טוען ביצועים...', en: 'Loading performance data...' },
+    leads: { he: 'טוען לידים...', en: 'Loading leads...' },
+    done: { he: 'מסיים...', en: 'Finishing...' }
+  };
+  const loadingLabel = loadingStageLabels[loadingStage]?.[lang === 'he' ? 'he' : 'en'] ?? (lang === 'he' ? 'טוען...' : 'Loading...');
 
   // Conversion Goal Selector State (UI Preference)
   const [conversionGoal, setConversionGoal] = useState<string>(() => {
@@ -50,6 +62,8 @@ const Dashboard: React.FC = () => {
     // ✅ לוג למעקב
     console.log(`🔄 Account changed in Dashboard`);
     console.log(`📊 Displaying data for account: ${newAccountId}`);
+    console.log(`🔍 Fetching data for Account ID: ${newAccountId}`);
+    // ✅ עדכון Global State ב-DataContext
     setSelectedAccountId(newAccountId);
   };
 
@@ -94,14 +108,22 @@ const Dashboard: React.FC = () => {
       // ✅ וידוא שאנחנו משתמשים רק בנתוני החשבון הספציפי
       console.log(`📊 Using accountInsights for account ${selectedAccountId}:`, {
         spend: accountInsights.spend,
+        impressions: accountInsights.impressions,
+        clicks: accountInsights.clicks,
         conversions: convValue,
-        revenue: accountInsights.revenue
+        revenue: accountInsights.revenue,
+        leads: accountInsights.leads,
+        purchases: accountInsights.purchases,
+        whatsapp: accountInsights.conversions?.whatsapp || 0,
+        allConversions: accountInsights.conversions
       });
       
       return {
         spend: accountInsights.spend || 0,
         conversions: convValue,
         revenue: accountInsights.revenue || 0,
+        impressions: accountInsights.impressions || 0,
+        clicks: accountInsights.clicks || 0,
         optimizations: stats.optimizations // זה עדיין מסכימת קמפיינים (לא קיים ב-accountInsights)
       };
     }
@@ -192,12 +214,39 @@ const Dashboard: React.FC = () => {
           }));
   }, [displayedCampaigns, chartData, statusFilter, lang]);
 
+  // During loading (with or without account yet) show progress so user always sees connection state
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-4 max-w-md mx-auto">
+        <div className="w-full space-y-5">
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-600 font-medium" dir={dir}>
+              {loadingLabel}
+            </span>
+            <span className="text-slate-500 tabular-nums">
+              {loadingProgress}%
+            </span>
+          </div>
+          <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${Math.min(100, Math.max(0, loadingProgress))}%` }}
+            />
+          </div>
+          <p className="text-slate-400 text-xs text-center" dir={dir}>
+            {lang === 'he' ? 'מתחבר לפייסבוק ומביא את הנתונים האחרונים' : 'Connecting to Facebook and fetching latest data'}
+          </p>
+        </div>
+        <div className="mt-8 w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" aria-hidden />
+      </div>
+    );
+  }
+
+  // Not loading and not connected → show Connect Facebook
   if (!hasFacebookConnection) {
-    // ... existing "Connect Facebook" UI ...
     return (
       <div className="space-y-6">
         <div className="bg-blue-50 border border-blue-200 rounded-[32px] p-8 text-center">
-             {/* ... same as before ... */}
              <div className="flex flex-col items-center gap-4">
             <div className="p-4 bg-blue-100 rounded-full">
               <Icons.Facebook className="w-12 h-12 text-blue-600" />
@@ -212,10 +261,12 @@ const Dashboard: React.FC = () => {
                   : 'To view real Facebook data, please connect your ad account.'}
               </p>
               <button
-                onClick={() => window.location.href = '/#settings'}
+                onClick={() => {
+                  window.location.hash = 'settings';
+                }}
                 className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black uppercase tracking-widest hover:bg-blue-700 transition-all"
               >
-                {lang === 'he' ? 'לך להגדרות' : 'Go to Settings'}
+                {lang === 'he' ? 'התחברות לחשבונות' : 'Connect to Accounts'}
               </button>
             </div>
           </div>
@@ -288,6 +339,11 @@ const Dashboard: React.FC = () => {
               {lang === 'he' ? 'טווח תאריכים' : 'Date Range'}
             </span>
             <div className="flex flex-col gap-2">
+              {dateRange.startDate && dateRange.endDate && (
+                <span className="text-[10px] text-slate-500" title={lang === 'he' ? 'השווה לאותו טווח ב-Ads Manager' : 'Compare to same range in Ads Manager'}>
+                  {dateRange.startDate} → {dateRange.endDate}
+                </span>
+              )}
               <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
                 {timeRangeOptions.map((option) => (
                   <button
@@ -335,56 +391,111 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Loading Spinner - Show when data is being refreshed */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center space-y-4">
-            <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-            <p className="text-slate-500 font-medium">
-              {lang === 'he' ? 'טוען נתונים מפייסבוק...' : 'Loading Facebook data...'}
-            </p>
+      {/* Error Message - Show rate limit error */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-[24px] p-6 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-red-100 rounded-xl">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-red-800 text-sm mb-1">
+                  {lang === 'he' ? 'שגיאה' : 'Error'}
+                </h3>
+                <p className="text-red-600 text-sm">
+                  {error}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={clearError}
+              className="text-red-400 hover:text-red-600 transition-colors"
+              aria-label={lang === 'he' ? 'סגור' : 'Close'}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
 
-      {/* Rest of dashboard - only show when not loading */}
-      {!isLoading && (
-        <>
+      {/* Rest of dashboard - loading is handled by early return above */}
+      <>
 
       {/* ... Rest of the dashboard (StatCards, Charts, Tables) ... */}
+      {/* נתונים אמיתיים מחשבון מודעות – ללא אחוזי טרנד מזויפים */}
+      {hasFacebookConnection && accountInsights && (
+        <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-2">
+          <Icons.Facebook className="w-4 h-4 text-blue-600" />
+          <span>{lang === 'he' ? 'נתונים מחשבון מודעות פייסבוק' : 'Data from Facebook Ad Account'}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* 1. Spend Card (Always Shown) */}
-        <StatCard title={t('totalSpend')} value={`${currency}${formatValue(dynamicStats.spend)}`} trend={accountInsights ? "" : "+12%"} icon={<Icons.Zap />} />
-        
-        {/* 2. Dynamic Conversions */}
+        <StatCard title={t('totalSpend')} value={`${currency}${formatValue(dynamicStats.spend)}`} trend="" icon={<Icons.Zap />} />
         <StatCard 
             title={goalLabels[conversionGoal]} 
             value={dynamicStats.conversions.toString()} 
-            trend={accountInsights ? "" : "+24%"}
+            trend=""
             icon={conversionGoal === 'whatsapp' ? <Icons.WhatsApp /> : <Icons.Users />} 
             color="text-green-600" 
         />
-
-        {/* 3. Dynamic CPA / ROAS */}
         {conversionGoal === 'purchase' ? (
-           <StatCard title="ROAS" value={`${avgRoas.toFixed(2)}x`} trend={accountInsights ? "" : "+8%"} icon={<Icons.TrendingUp />} color="text-purple-600" />
+           <StatCard title="ROAS" value={`${avgRoas.toFixed(2)}x`} trend="" icon={<Icons.TrendingUp />} color="text-purple-600" />
         ) : (
            <StatCard 
              title={lang === 'he' ? `עלות ל-${goalLabels[conversionGoal]}` : `Cost per ${goalLabels[conversionGoal]}`} 
              value={`${currency}${formatValue(Number(dynamicCPA))}`} 
-             trend={accountInsights ? "" : "-5%"}
+             trend=""
              icon={<Icons.TrendingUp />} 
              color="text-blue-600" 
            />
         )}
-        
-        {/* 4. Extra Card */}
         {conversionGoal === 'purchase' ? (
-          <StatCard title="Revenue" value={`${currency}${formatValue(dynamicStats.revenue)}`} trend={accountInsights ? "" : "+5%"} icon={<Icons.CreditCard />} color="text-emerald-600" />
+          <StatCard title="Revenue" value={`${currency}${formatValue(dynamicStats.revenue)}`} trend="" icon={<Icons.CreditCard />} color="text-emerald-600" />
         ) : (
-          <StatCard title={t('aiOptimizations')} value={stats.optimizations.toString()} trend="Active" icon={<Icons.Robot />} color="text-pink-600" />
+          <StatCard title={t('aiOptimizations')} value={stats.optimizations.toString()} trend="" icon={<Icons.Robot />} color="text-pink-600" />
         )}
       </div>
+
+      {/* פירוט מדדים מלא – הוצאה, חשיפות, קליקים, לידים, וואטסאפ, רכישות */}
+      {hasFacebookConnection && accountInsights && (
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+          <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+            {lang === 'he' ? 'פירוט מדדים (נתוני אמת)' : 'Metrics breakdown (real data)'}
+          </h4>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'הוצאה' : 'Spend'}</span>
+              <span className="font-black text-slate-800">{currency}{formatValue(accountInsights.spend || 0)}</span>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'חשיפות' : 'Impressions'}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.impressions || 0)}</span>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'קליקים' : 'Clicks'}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.clicks || 0)}</span>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'לידים (טפסים+אתר)' : 'Leads (forms+site)'}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.lead ?? accountInsights.leads ?? 0)}</span>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'וואטסאפ' : 'WhatsApp'}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.whatsapp ?? 0)}</span>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'רכישות' : 'Purchases'}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.purchase ?? accountInsights.purchases ?? 0)}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm flex flex-col">
@@ -521,7 +632,6 @@ const Dashboard: React.FC = () => {
         )}
       </div>
         </>
-      )}
     </div>
   );
 };

@@ -1,12 +1,17 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { Campaign, MetaAdAccount, CampaignStatus, Platform, Lead, LeadStatus } from '../types';
 import { metaService, parseMetaInsights } from '../services/metaService';
+import { config } from '../config';
 
 interface DataContextType {
   campaigns: Campaign[];
   adAccounts: MetaAdAccount[];
   selectedAccountId: string;
   isLoading: boolean;
+  /** שלב הטעינה הנוכחי (למשל: campaigns, insights, leads) - לתצוגת התקדמות */
+  loadingStage: string;
+  /** אחוז התקדמות 0–100 - לתצוגת פס התקדמות */
+  loadingProgress: number;
   dateRange: {
     type: string;
     startDate: string;
@@ -24,6 +29,8 @@ interface DataContextType {
   filteredCampaigns: Campaign[];
   leads: Lead[];
   fetchLeads: () => Promise<void>;
+  error: string | null;
+  clearError: () => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -46,9 +53,12 @@ const getDateRange = (rangeType: string, customStart?: string, customEnd?: strin
         start.setHours(0, 0, 0, 0);
         break;
       case 'yesterday':
-        start.setDate(start.getDate() - 1);
+        // ✅ תיקון: אתמול = אותו יום (start ו-end זהים)
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        start = new Date(yesterday);
         start.setHours(0, 0, 0, 0);
-        end.setDate(end.getDate() - 1);
+        end = new Date(yesterday);
         end.setHours(23, 59, 59, 999);
         break;
       case 'last_7d':
@@ -68,9 +78,16 @@ const getDateRange = (rangeType: string, customStart?: string, customEnd?: strin
         start.setHours(0, 0, 0, 0);
     }
     
+    const formatDate = (d: Date) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     return {
-      start: start.toISOString().split('T')[0],
-      end: end.toISOString().split('T')[0]
+      start: formatDate(start),
+      end: formatDate(end)
     };
 };
 
@@ -79,11 +96,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [adAccounts, setAdAccounts] = useState<MetaAdAccount[]>([]);
   const [selectedAccountId, setSelectedAccountIdState] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingStage, setLoadingStage] = useState('');
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [accountInsights, setAccountInsights] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'PAUSED'>('ALL');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // Date State
   const [dateRangeType, setDateRangeTypeState] = useState('last_7d');
@@ -112,34 +132,43 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setEndDate(end);
   };
 
-  const setSelectedAccountId = (id: string) => {
-      // ✅ איפוס מלא של כל ה-States לפני החלפת חשבון
-      console.log(`🔄 Switching account from ${selectedAccountId} to ${id}`);
+  const setSelectedAccountId = useCallback((id: string) => {
+      // ✅ איפוס מלא של כל ה-States לפני החלפת חשבון - בידוד מלא בין חשבונות
+      console.log(`🔄 Switching account to ${id}`);
       console.log(`🧹 Resetting all states for account isolation...`);
       
-      // איפוס כל הנתונים
+      // ✅ עצירת כל טעינה פעילה
+      isRefreshingRef.current = false;
+      isFetchingRef.current = false;
+      lastRefreshParamsRef.current = null;
+      
+      // ✅ איפוס מיידי של כל הנתונים - מניעת הצגת נתונים מחשבון קודם
       setCampaigns([]);
       setAccountInsights(null);
       setLeads([]);
       setChartData([]);
       setIsLoading(true);
+      setIsConnected(false);
+      dataCacheRef.current.clear();
       
       // עדכון החשבון הנבחר
       setSelectedAccountIdState(id);
-      metaService.setSelectedAccount(id);
+      // ✅ תיקון: עדכון החשבון בלי לגרום ל-initializeConnection להיקרא שוב
+      metaService.setSelectedAccount(id, true); // skipEvent = true למניעת לולאה
+      lastInitializedAccountRef.current = id;
       
       // ✅ לוג למעקב
       console.log(`✅ Account switched to: ${id}`);
-      console.log(`📊 Displaying data for account: ${id}`);
-  };
+      console.log(`📊 All previous account data cleared - ready for new account data`);
+  }, []); // ✅ תיקון: הסרת selectedAccountId מה-dependencies - נשתמש ב-id מהפרמטר
 
-  // פונקציה למשיכת לידים
-  const fetchLeads = async () => {
+  // ✅ תיקון: פונקציה למשיכת לידים עם useCallback למניעת יצירה מחדש
+  const fetchLeads = useCallback(async () => {
     if (!selectedAccountId || !startDate || !endDate) return;
     
     try {
       const response = await fetch(
-        `http://localhost:5001/api/facebook/leads?accountId=${selectedAccountId}&startDate=${startDate}&endDate=${endDate}`,
+        `${config.apiBaseUrl}/api/facebook/leads?accountId=${selectedAccountId}&startDate=${startDate}&endDate=${endDate}`,
         {
           credentials: 'include'
         }
@@ -166,7 +195,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           campaignName: rawLead.campaignName,
           value: 0, // ניתן לחשב לפי קמפיין או להוסיף שדה נוסף
           createdAt: rawLead.createdAt,
-          aiScore: Math.floor(Math.random() * 30) + 70, // דמו - ניתן להחליף ב-AI אמיתי
+          aiScore: 0, // נתון אמיתי יוגדר בעתיד (AI)
           aiInsight: 'High intent user based on campaign engagement.'
         };
       });
@@ -177,163 +206,487 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error('Error fetching leads:', error);
       setLeads([]);
     }
-  };
+  }, [selectedAccountId, startDate, endDate]);
 
-  const refreshData = async () => {
-    if (!selectedAccountId || !startDate || !endDate) {
+  // ✅ תיקון: שימוש ב-useRef למניעת לולאות אינסופיות - מעקב אחרי טעינה פעילה
+  const isRefreshingRef = useRef(false);
+  const lastRefreshParamsRef = useRef<{ accountId: string; startDate: string; endDate: string } | null>(null);
+  const isFetchingRef = useRef(false); // ✅ תיקון: משתנה נוסף למניעת קריאות כפולות
+  const isInitializingRef = useRef(false); // ✅ תיקון: מניעת קריאות כפולות ל-initializeConnection
+  const lastInitializedAccountRef = useRef<string | null>(null); // ✅ תיקון: מעקב אחרי החשבון האחרון שאותחל
+  const DATA_CACHE_TTL_MS = 2 * 60 * 1000; // 2 דקות cache - שינוי תאריך לטרוף שכבר טענו מרגיש מיידי
+  const dataCacheRef = useRef<Map<string, { campaigns: Campaign[]; accountInsights: any; chartData: any[]; leads: Lead[]; timestamp: number }>>(new Map());
+
+  // ✅ תיקון: שימוש ב-useCallback כדי למנוע יצירה מחדש של הפונקציה
+  const refreshData = useCallback(async () => {
+    // ✅ תיקון: מניעת קריאות כפולות - אם כבר בטעינה, לא נקרא שוב
+    if (isRefreshingRef.current || isFetchingRef.current) {
+      console.log('⏸️ refreshData already in progress, skipping duplicate call');
+      return;
+    }
+
+    // ✅ כל הנתונים (קמפיינים, ביצועים, לידים) תמיד לפי החשבון שנבחר – גם במסך קמפיינים וגם במסך ביצועים
+    const currentAccountId = selectedAccountId;
+    
+    if (!currentAccountId || !startDate || !endDate) {
+      console.log('⏸️ refreshData skipped - missing required values');
       setIsConnected(false);
+      setIsLoading(false);
+      return;
+    }
+
+    // ✅ תיקון: בדיקה אם הפרמטרים השתנו - אם לא, לא נטען שוב
+    const currentParams = { accountId: currentAccountId, startDate, endDate };
+    if (lastRefreshParamsRef.current && 
+        lastRefreshParamsRef.current.accountId === currentParams.accountId &&
+        lastRefreshParamsRef.current.startDate === currentParams.startDate &&
+        lastRefreshParamsRef.current.endDate === currentParams.endDate) {
+      console.log('⏸️ refreshData skipped - parameters unchanged');
       return;
     }
     
+    // ✅ סימון שהטעינה החלה
+    isRefreshingRef.current = true;
+    isFetchingRef.current = true;
+    lastRefreshParamsRef.current = currentParams;
+    
     // ✅ לוג למעקב - איזה חשבון נטען
-    console.log(`📊 Loading data for account: ${selectedAccountId}`);
+    console.log(`🔍 Fetching data for Account ID: ${currentAccountId}`);
     console.log(`📅 Date range: ${startDate} to ${endDate}`);
     
     setIsLoading(true);
     setIsConnected(false);
+    setLoadingStage('campaigns');
+    setLoadingProgress(10);
     try {
-        // Fetch Campaigns - רק מהחשבון הספציפי
-        const fbCampaigns = await metaService.fetchCampaigns(selectedAccountId);
-        console.log(`✅ Fetched ${fbCampaigns.length} campaigns for account ${selectedAccountId}`);
+        const cacheKey = `${currentAccountId}|${startDate}|${endDate}`;
+        const cached = dataCacheRef.current.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < DATA_CACHE_TTL_MS) {
+          setCampaigns(cached.campaigns);
+          setAccountInsights(cached.accountInsights);
+          setChartData(cached.chartData);
+          setLeads(cached.leads);
+          setLoadingProgress(100);
+          setLoadingStage('done');
+          setIsConnected(true);
+          setIsLoading(false);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          console.log(`✅ Loaded from cache for ${cacheKey}`);
+          return;
+        }
+
+        setLoadingStage('campaigns');
+        setLoadingProgress(20);
+        // ✅ ביצועים: משיכת קמפיינים ללא insights (רק מטא-דאטה) - רק מהחשבון הנוכחי
+        const fbCampaigns = await metaService.fetchCampaigns(currentAccountId);
+        console.log(`✅ Fetched ${fbCampaigns.length} campaigns for account ${currentAccountId}`);
         
-        // Fetch Insights for each campaign
-        const campaignsWithInsights = await Promise.all(
-          fbCampaigns.map(async (fbCampaign: any) => {
-            try {
-              const rawInsights = await metaService.fetchCampaignInsights(fbCampaign.id, startDate, endDate, selectedAccountId);
-              const processed = parseMetaInsights(rawInsights);
-              
-              let history: any[] = [];
-              if (rawInsights.daily && Array.isArray(rawInsights.daily)) {
-                  history = rawInsights.daily.map((d: any) => {
-                      // We can use parseMetaInsights or just parse manually since we need specific fields
-                      return {
-                          date: d.date_start,
-                          spend: parseFloat(d.spend || '0'),
-                          leads: parseInt(d.actions?.find((a: any) => a.action_type === 'lead')?.value || '0'), // Simplified lead extraction for history
-                          clicks: parseInt(d.clicks || '0'),
-                          impressions: parseInt(d.impressions || '0')
-                      };
-                  });
-              }
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed during fetch (${currentAccountId} -> ${selectedAccountId}), aborting update`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+        
+        const campaignsBasicData = fbCampaigns.map((fbCampaign: any) => ({
+          id: fbCampaign.id,
+          name: fbCampaign.name,
+          objective: fbCampaign.objective || 'Unknown',
+          platforms: [Platform.FACEBOOK],
+          budget: 0, 
+          status: (fbCampaign.status === 'ACTIVE' ? CampaignStatus.ACTIVE : CampaignStatus.PAUSED) as any,
+          creatives: [], 
+          conversions: {},
+          history: [],
+          performance: {
+            spend: 0,
+            leads: 0,
+            purchases: 0,
+            revenue: 0,
+            roas: 0,
+            ctr: 0,
+            cpl: 0,
+            optimizations: 0
+          },
+          createdAt: fbCampaign.created_time || new Date().toISOString()
+        })) as Campaign[];
+        
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed before setting campaigns, aborting`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+        
+        setCampaigns(campaignsBasicData);
+        setLoadingStage('insights');
+        setLoadingProgress(40);
+        console.log(`✅ Set ${campaignsBasicData.length} campaigns (basic). Fetching insights in parallel (batch + account)...`);
 
-              return {
-                id: fbCampaign.id,
-                name: fbCampaign.name,
-                objective: fbCampaign.objective || 'Unknown',
-                platforms: [Platform.FACEBOOK],
-                budget: 0, 
-                status: (fbCampaign.status === 'ACTIVE' ? CampaignStatus.ACTIVE : CampaignStatus.PAUSED) as any,
-                creatives: [], 
-                conversions: processed.conversions,
-                history,
-                performance: {
-                  spend: processed.spend,
-                  leads: processed.leads,
-                  purchases: processed.purchases,
-                  revenue: processed.revenue,
-                  roas: processed.roas,
-                  ctr: processed.ctr,
-                  cpl: processed.cpl,
-                  optimizations: 0
-                },
-                createdAt: fbCampaign.created_time || new Date().toISOString()
-              } as Campaign;
-            } catch (error) {
-              console.error(`Failed to fetch insights for campaign ${fbCampaign.id}:`, error);
-               return {
-                id: fbCampaign.id,
-                name: fbCampaign.name,
-                objective: fbCampaign.objective || 'Unknown',
-                platforms: [Platform.FACEBOOK],
-                budget: 0,
-                status: (fbCampaign.status === 'ACTIVE' ? CampaignStatus.ACTIVE : CampaignStatus.PAUSED) as any,
-                creatives: [],
-                performance: { spend: 0, leads: 0, purchases: 0, revenue: 0, roas: 0, ctr: 0, cpl: 0, optimizations: 0 },
-                createdAt: fbCampaign.created_time || new Date().toISOString()
-              } as Campaign;
-            }
-          })
-        );
-        setCampaigns(campaignsWithInsights);
+        // ✅ טעינה מקבילית: Account Insights + Batch Campaign Insights בבקשה אחת במקום N בקשות
+        const campaignIds = campaignsBasicData.map(c => c.id);
+        const [rawAccountInsights, insightsBatch] = await Promise.all([
+          metaService.fetchAccountInsights(currentAccountId, startDate, endDate),
+          campaignIds.length > 0 ? metaService.fetchCampaignInsightsBatch(currentAccountId, campaignIds, startDate, endDate) : Promise.resolve({})
+        ]);
 
-        // Fetch Account Insights - רק מהחשבון הספציפי
-        const rawAccountInsights = await metaService.fetchAccountInsights(selectedAccountId, startDate, endDate);
-        console.log(`✅ Fetched account insights for account ${selectedAccountId}`);
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed before setting insights, aborting`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+
+        const finalCampaigns = campaignsBasicData.map((campaign) => {
+          const campaignInsights = insightsBatch[campaign.id];
+          if (!campaignInsights) return campaign;
+          const processedInsights = parseMetaInsights(campaignInsights);
+          return {
+            ...campaign,
+            performance: {
+              spend: processedInsights.spend || 0,
+              leads: processedInsights.leads || 0,
+              purchases: processedInsights.purchases || 0,
+              revenue: processedInsights.revenue || 0,
+              roas: processedInsights.roas || 0,
+              ctr: processedInsights.ctr || 0,
+              cpl: processedInsights.cpl || 0,
+              optimizations: campaign.performance.optimizations || 0
+            },
+            conversions: processedInsights.conversions || {}
+          };
+        });
+        setCampaigns(finalCampaigns);
+        setLoadingProgress(70);
+        console.log(`✅ Updated ${finalCampaigns.length} campaigns with batch insights`);
+
+        // ✅ Account insights כבר נמשכו במקביל
+        console.log(`✅ Fetched account insights for account ${currentAccountId}`);
+        console.log(`📊 Raw insights data:`, {
+          hasSummary: !!rawAccountInsights.summary,
+          hasActions: !!rawAccountInsights.actions,
+          hasDaily: !!rawAccountInsights.daily,
+          actionsCount: rawAccountInsights.actions?.length || 0,
+          dailyCount: rawAccountInsights.daily?.length || 0
+        });
+        
+        // ✅ וידוא נוסף: אם החשבון השתנה, לא נעדכן
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed before setting insights, aborting`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+        
+        // #region agent log
+        const _rawSpend = rawAccountInsights?.spend ?? rawAccountInsights?.summary?.spend;
+        const _rawConv = rawAccountInsights?.unified_metrics ? (rawAccountInsights.unified_metrics.leads + rawAccountInsights.unified_metrics.whatsapp + rawAccountInsights.unified_metrics.purchases) : null;
+        fetch('http://127.0.0.1:7243/ingest/ba8235b7-5f86-4ac1-98ab-6e2a27ae27e9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ef0206'},body:JSON.stringify({sessionId:'ef0206',location:'DataContext.tsx:raw-response',message:'Raw account insights from server',data:{accountId:currentAccountId,startDate,endDate,rawKeys:Object.keys(rawAccountInsights||{}),rawSpend:_rawSpend,rawConversions:_rawConv,dailyLength:rawAccountInsights?.daily?.length},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         const processedAccountInsights = parseMetaInsights(rawAccountInsights);
+        console.log(`📊 Processed insights:`, {
+          spend: processedAccountInsights.spend,
+          impressions: processedAccountInsights.impressions,
+          clicks: processedAccountInsights.clicks,
+          leads: processedAccountInsights.leads,
+          purchases: processedAccountInsights.purchases,
+          revenue: processedAccountInsights.revenue,
+          conversions: processedAccountInsights.conversions
+        });
+        // #region agent log
+        const _totalConv = processedAccountInsights.conversions?.total ?? (processedAccountInsights.conversions?.lead ?? 0) + (processedAccountInsights.conversions?.whatsapp ?? 0) + (processedAccountInsights.conversions?.purchase ?? 0);
+        fetch('http://127.0.0.1:7243/ingest/ba8235b7-5f86-4ac1-98ab-6e2a27ae27e9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ef0206'},body:JSON.stringify({sessionId:'ef0206',location:'DataContext.tsx:after-parse',message:'After parseMetaInsights',data:{spend:processedAccountInsights.spend,conversionsTotal:_totalConv,conversions:processedAccountInsights.conversions},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
+        // #endregion
         setAccountInsights(processedAccountInsights);
         
-        // Process Chart Data
+        let chartDataToCache: any[] = [];
         if (rawAccountInsights.daily) {
              const dailyData = rawAccountInsights.daily.map((day: any) => {
                  const dayInsights = parseMetaInsights(day);
                  return {
-                     name: day.date_start, // Formatting handled in component
+                     name: day.date_start,
                      date: day.date_start,
                      spend: dayInsights.spend,
                      leads: dayInsights.leads,
-                     purchases: dayInsights.purchases
+                     purchases: dayInsights.purchases,
+                     impressions: dayInsights.impressions,
+                     clicks: dayInsights.clicks,
+                     revenue: dayInsights.revenue,
+                     conversions: dayInsights.conversions.total
                  };
              });
              setChartData(dailyData);
+             chartDataToCache = dailyData;
         } else {
-            // Fallback estimation
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            
-            const estimatedData = Array.from({ length: Math.min(daysDiff, 30) }, (_, i) => {
-                const date = new Date(start);
-                date.setDate(date.getDate() + i);
-                return {
-                  name: date.toISOString().split('T')[0],
-                  spend: Math.round((processedAccountInsights.spend || 0) / daysDiff),
-                  leads: Math.round((processedAccountInsights.leads || 0) / daysDiff),
-                  purchases: Math.round((processedAccountInsights.purchases || 0) / daysDiff)
-                };
-            });
-            setChartData(estimatedData);
+            // אין נתוני daily מפייסבוק – מציגים נקודת סיכום אחת (נתוני אמת) בלי להמציא פילוח לימים
+            const summaryPoint = [{
+              name: `${startDate} – ${endDate}`,
+              date: endDate,
+              spend: processedAccountInsights.spend || 0,
+              leads: processedAccountInsights.leads || 0,
+              purchases: processedAccountInsights.purchases || 0,
+              impressions: processedAccountInsights.impressions || 0,
+              clicks: processedAccountInsights.clicks || 0,
+              revenue: processedAccountInsights.revenue || 0,
+              conversions: processedAccountInsights.conversions?.total || 0
+            }];
+            setChartData(summaryPoint);
+            chartDataToCache = summaryPoint;
         }
 
-        // משיכת לידים - רק מהחשבון הספציפי
-        await fetchLeads();
+        // ✅ וידוא נוסף: אם החשבון השתנה, לא נעדכן
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed before fetching leads, aborting`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+        
+        setLoadingStage('leads');
+        setLoadingProgress(85);
+        let cachedLeads: Lead[] = [];
+        try {
+          const leadsResponse = await fetch(
+            `${config.apiBaseUrl}/api/facebook/leads?accountId=${currentAccountId}&startDate=${startDate}&endDate=${endDate}`,
+            {
+              credentials: 'include'
+            }
+          );
+          
+          if (leadsResponse.ok) {
+            const rawLeads = await leadsResponse.json();
+            const leadsWithStatus: Lead[] = rawLeads.map((rawLead: any) => {
+              const savedStatus = localStorage.getItem(`lead_status_${rawLead.id}`);
+              const status = savedStatus ? (savedStatus as LeadStatus) : LeadStatus.NEW;
+              return {
+                id: rawLead.id,
+                name: rawLead.name,
+                email: rawLead.email || '',
+                phone: rawLead.phone || '',
+                status: status,
+                campaignId: rawLead.campaignId,
+                campaignName: rawLead.campaignName,
+                value: 0,
+                createdAt: rawLead.createdAt,
+                aiScore: 0,
+                aiInsight: 'High intent user based on campaign engagement.'
+              };
+            });
+            cachedLeads = leadsWithStatus;
+            if (selectedAccountId === currentAccountId) {
+              setLeads(leadsWithStatus);
+              console.log(`✅ Fetched ${leadsWithStatus.length} leads for account ${currentAccountId}`);
+            }
+          }
+        } catch (leadsError) {
+          console.error('Error fetching leads:', leadsError);
+        }
 
-        // עדכון isConnected ל-true רק אחרי שהצלחנו למשוך נתונים
+        if (selectedAccountId !== currentAccountId) {
+          console.warn(`⚠️ Account changed before finalizing, aborting`);
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return;
+        }
+
+        dataCacheRef.current.set(cacheKey, {
+          campaigns: finalCampaigns,
+          accountInsights: processedAccountInsights,
+          chartData: chartDataToCache,
+          leads: cachedLeads,
+          timestamp: Date.now()
+        });
+        setLoadingProgress(100);
+        setLoadingStage('done');
         setIsConnected(true);
-        console.log(`✅ Successfully loaded data for account: ${selectedAccountId}`);
+        console.log(`✅ Successfully loaded data for account: ${currentAccountId}`);
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error fetching data:", error);
         setIsConnected(false);
+        
+        // ✅ תיקון: טיפול בשגיאת Rate Limit (#4) - הצגת הודעה למשתמש
+        if (error.code === 4 || 
+            error.message?.includes('rate limit') || 
+            error.message?.includes('Rate limit') ||
+            error.message?.includes('request limit')) {
+          console.error('⚠️ Rate limit exceeded - stopping refresh attempts');
+          setError('חריגה ממכסת בקשות, אנא המתן מספר דקות');
+          // ✅ עצירת כל ניסיונות ריענון נוספים
+          isRefreshingRef.current = false;
+          isFetchingRef.current = false;
+          return; // לא ננסה שוב
+        } else {
+          // שגיאות אחרות - ניקוי שגיאת rate limit אם הייתה
+          if (error.message && !error.message.includes('rate limit')) {
+            setError(null);
+          }
+        }
     } finally {
+        setLoadingProgress(prev => (prev < 100 ? 100 : prev));
+        setLoadingStage('done');
         setIsLoading(false);
+        isRefreshingRef.current = false;
+        isFetchingRef.current = false;
     }
-  };
+  }, [selectedAccountId, startDate, endDate]); // ✅ תיקון: הסרת fetchLeads מה-dependencies למניעת לולאות אינסופיות
 
-  // Initial Sync
-  useEffect(() => {
-      const init = async () => {
+  // Initial Sync and Connection Monitoring
+  const initializeConnection = async () => {
+      // ✅ תיקון: מניעת קריאות כפולות
+      if (isInitializingRef.current) {
+          console.log('⏸️ initializeConnection already in progress, skipping');
+          return;
+      }
+      
+      isInitializingRef.current = true;
+      console.log('🔄 Initializing connection...');
+      
+      try {
           const authData = await metaService.checkAuth();
           if (authData) {
+              console.log(`✅ Authenticated as: ${authData.user?.name}`);
               const accounts = await metaService.fetchAdAccounts();
+              console.log(`📊 Found ${accounts.length} ad accounts`);
+              
               setAdAccounts(accounts);
               const conn = metaService.getConnection();
-              if (conn?.selectedAccountId) {
-                  setSelectedAccountIdState(conn.selectedAccountId);
-              } else if (accounts.length > 0) {
-                  setSelectedAccountIdState(accounts[0].account_id);
-                  metaService.setSelectedAccount(accounts[0].account_id);
+              
+              // ✅ תיקון: בדיקה אם החשבון כבר אותחל - אם כן, לא נעדכן
+              const accountToUse = conn?.selectedAccountId || (accounts.length > 0 ? accounts[0].account_id : null);
+              
+              if (accountToUse && accountToUse === lastInitializedAccountRef.current) {
+                  console.log(`⏸️ Account ${accountToUse} already initialized, skipping update`);
+                  isInitializingRef.current = false;
+                  return;
               }
+              
+              if (conn?.selectedAccountId) {
+                  console.log(`🎯 Using saved account: ${conn.selectedAccountId}`);
+                  lastInitializedAccountRef.current = conn.selectedAccountId;
+                  // ✅ תיקון: עדכון רק אם החשבון השתנה
+                  if (selectedAccountId !== conn.selectedAccountId) {
+                      setSelectedAccountIdState(conn.selectedAccountId);
+                  }
+              } else if (accounts.length > 0) {
+                  console.log(`🎯 Auto-selecting first account: ${accounts[0].account_id}`);
+                  lastInitializedAccountRef.current = accounts[0].account_id;
+                  // ✅ תיקון: עדכון רק אם החשבון השתנה
+                  if (selectedAccountId !== accounts[0].account_id) {
+                      setSelectedAccountIdState(accounts[0].account_id);
+                      metaService.setSelectedAccount(accounts[0].account_id, true); // skipEvent = true למניעת לולאה
+                  }
+              }
+          } else {
+              console.log('❌ Not authenticated, clearing data');
+              lastInitializedAccountRef.current = null;
+              setAdAccounts([]);
+              if (selectedAccountId) {
+                  setSelectedAccountIdState('');
+              }
+              setCampaigns([]);
+              setAccountInsights(null);
+              setLeads([]);
+              setChartData([]);
+              setIsConnected(false);
           }
+      } catch (error) {
+          console.error('Error initializing connection:', error);
+      } finally {
           setIsLoading(false);
-      };
-      init();
+          isInitializingRef.current = false;
+      }
+  };
+
+  useEffect(() => {
+      initializeConnection();
   }, []);
 
-  // Fetch data when dependencies change
+  // Monitor connection changes
   useEffect(() => {
-      refreshData();
-  }, [selectedAccountId, startDate, endDate]);
+      const handleConnectionChange = (event?: Event) => {
+          // ✅ תיקון: בדיקה אם זה אירוע מ-setSelectedAccount - אם כן, לא נאתחל מחדש
+          const customEvent = event as CustomEvent;
+          if (customEvent?.detail?.skipReinit) {
+              console.log('⏸️ Skipping reinit - internal account change');
+              return;
+          }
+          
+          // ✅ תיקון: מניעת קריאות כפולות
+          if (isInitializingRef.current) {
+              console.log('⏸️ Already initializing, skipping connection change handler');
+              return;
+          }
+          
+          console.log('🔄 Connection change detected, reinitializing...');
+          initializeConnection();
+      };
+
+      // Listen for localStorage changes (when connection is updated)
+      window.addEventListener('storage', handleConnectionChange);
+      
+      // Also listen for custom events when connection changes
+      window.addEventListener('facebook-connection-changed', handleConnectionChange);
+      
+      return () => {
+          window.removeEventListener('storage', handleConnectionChange);
+          window.removeEventListener('facebook-connection-changed', handleConnectionChange);
+      };
+  }, []);
+
+  // ✅ תיקון: Fetch data when dependencies change - עם תלות מדויקת למניעת לולאות אינסופיות
+  useEffect(() => {
+      // ✅ תיקון: וידוא שיש ערכים תקינים לפני קריאה
+      if (!selectedAccountId || !startDate || !endDate) {
+          console.log('⏸️ Skipping refreshData - missing required values:', { selectedAccountId, startDate, endDate });
+          return;
+      }
+      
+      // ✅ תיקון: בדיקה נוספת - אם כבר בטעינה, לא נקרא שוב
+      if (isRefreshingRef.current || isFetchingRef.current) {
+          console.log('⏸️ Skipping refreshData - already refreshing');
+          return;
+      }
+      
+      // ✅ תיקון: בדיקה אם הפרמטרים השתנו - אם לא, לא נטען שוב
+      const currentParams = { accountId: selectedAccountId, startDate, endDate };
+      if (lastRefreshParamsRef.current && 
+          lastRefreshParamsRef.current.accountId === currentParams.accountId &&
+          lastRefreshParamsRef.current.startDate === currentParams.startDate &&
+          lastRefreshParamsRef.current.endDate === currentParams.endDate) {
+        console.log('⏸️ Skipping refreshData - parameters unchanged in useEffect');
+        return;
+      }
+      
+      // ✅ תיקון: Debounce - המתן קצת לפני הקריאה למניעת קריאות מיותרות
+      const timeoutId = setTimeout(() => {
+          // ✅ בדיקה נוספת לפני הקריאה - אולי הפרמטרים השתנו בזמן ההמתנה
+          if (isRefreshingRef.current || isFetchingRef.current) {
+              console.log('⏸️ Skipping refreshData - already refreshing (after debounce)');
+              return;
+          }
+          
+          const latestParams = { accountId: selectedAccountId, startDate, endDate };
+          if (lastRefreshParamsRef.current && 
+              lastRefreshParamsRef.current.accountId === latestParams.accountId &&
+              lastRefreshParamsRef.current.startDate === latestParams.startDate &&
+              lastRefreshParamsRef.current.endDate === latestParams.endDate) {
+            console.log('⏸️ Skipping refreshData - parameters unchanged (after debounce)');
+            return;
+          }
+          
+          console.log('🔄 Triggering refreshData due to dependency change:', { selectedAccountId, startDate, endDate });
+          refreshData();
+      }, 300); // ✅ Debounce של 300ms
+      
+      // ✅ ניקוי timeout אם הפרמטרים השתנו לפני שהזמן עבר
+      return () => {
+          clearTimeout(timeoutId);
+      };
+      // ✅ תיקון: refreshData לא צריך להיות ב-dependency array כי זה יוצר לולאה אינסופית
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccountId, startDate, endDate]); // ✅ תלויות מדויקות בלבד - ללא refreshData
 
   const filteredCampaigns = campaigns.filter(c => {
     if (statusFilter === 'ALL') return true;
@@ -342,12 +695,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return true;
   });
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   return (
     <DataContext.Provider value={{
         campaigns,
         adAccounts,
         selectedAccountId,
         isLoading,
+        loadingStage,
+        loadingProgress,
         dateRange: { type: dateRangeType, startDate, endDate },
         accountInsights,
         chartData,
@@ -360,7 +719,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setStatusFilter,
         filteredCampaigns,
         leads,
-        fetchLeads
+        fetchLeads,
+        error,
+        clearError
     }}>
       {children}
     </DataContext.Provider>
