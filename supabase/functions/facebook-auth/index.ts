@@ -4,7 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts'
 const FACEBOOK_APP_ID = Deno.env.get('FACEBOOK_APP_ID') || ''
 const FACEBOOK_APP_SECRET = Deno.env.get('FACEBOOK_APP_SECRET') || ''
 const FACEBOOK_REDIRECT_URI = Deno.env.get('FACEBOOK_REDIRECT_URI') || ''
-const FRONTEND_URL = Deno.env.get('FRONTEND_URL') || 'http://localhost:3000'
+const FRONTEND_URL = Deno.env.get('FRONTEND_URL') || Deno.env.get('VITE_FRONTEND_URL') || 'https://ppc-ai-master-new.onrender.com'
 
 serve(async (req) => {
   // Handle CORS preflight

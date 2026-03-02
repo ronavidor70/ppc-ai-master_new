@@ -13,7 +13,7 @@ export const config = {
   // Frontend URL for redirects
   frontendUrl: import.meta.env.VITE_FRONTEND_URL || 
     (import.meta.env.MODE === 'production'
-      ? (import.meta.env.VITE_SUPABASE_URL || '') // Set VITE_SUPABASE_URL in production
+      ? 'https://ppc-ai-master-new.onrender.com'
       : 'http://localhost:3000'),
   
   // Environment

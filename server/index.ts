@@ -42,8 +42,11 @@ console.log('Facebook App Secret:', facebookAppSecret ? '***' + facebookAppSecre
 console.log('Facebook Redirect URI:', facebookRedirectUri || '❌ NOT SET');
 console.log('Session Secret:', sessionSecret ? 'SET' : '❌ NOT SET');
 
+// Frontend URL for redirects (OAuth callbacks, etc.)
+const FRONTEND_URL = process.env.VITE_FRONTEND_URL || 'https://ppc-ai-master-new.onrender.com';
+
 // CORS - אפשר גישה מ-frontend (ב-production השתמש ב-FRONTEND_URL או CORS_ORIGIN)
-const corsOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:3000';
+const corsOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || process.env.VITE_FRONTEND_URL || FRONTEND_URL;
 app.use(cors({
   origin: corsOrigin,
   credentials: true
@@ -316,11 +319,11 @@ app.get('/auth/facebook/callback',
       // Check if it's a rate limit error
       if (errorCode === '4' || errorReason.includes('rate') || errorReason.includes('limit')) {
         console.error('⚠️ Rate limit error detected in OAuth callback');
-        return res.redirect('http://localhost:3000/?error=rate_limit_exceeded');
+        return res.redirect(`${FRONTEND_URL}/?error=rate_limit_exceeded`);
       }
       
       // Generic OAuth error
-      return res.redirect('http://localhost:3000/?error=oauth_failed');
+      return res.redirect(`${FRONTEND_URL}/?error=oauth_failed`);
     }
     
     next();
@@ -344,12 +347,12 @@ app.get('/auth/facebook/callback',
             errorMessage.includes('request limit') ||
             errorMessage.includes('(#4)')) {
           console.error('⚠️ Rate limit error (#4) detected in passport authentication');
-          return res.redirect('http://localhost:3000/?error=rate_limit_exceeded');
+          return res.redirect(`${FRONTEND_URL}/?error=rate_limit_exceeded`);
         }
         
         // שגיאות אחרות
         console.error('❌ Other authentication error:', errorMessage);
-        return res.redirect('http://localhost:3000/?error=authentication_failed');
+        return res.redirect(`${FRONTEND_URL}/?error=authentication_failed`);
       }
       
       // ✅ אם אין user, זה כנראה failure
@@ -362,17 +365,17 @@ app.get('/auth/facebook/callback',
             infoMessage.includes('request limit') ||
             infoMessage.includes('(#4)')) {
           console.error('⚠️ Rate limit error detected in info');
-          return res.redirect('http://localhost:3000/?error=rate_limit_exceeded');
+          return res.redirect(`${FRONTEND_URL}/?error=rate_limit_exceeded`);
         }
         
-        return res.redirect('http://localhost:3000/?error=authentication_failed');
+        return res.redirect(`${FRONTEND_URL}/?error=authentication_failed`);
       }
       
       // ✅ הצלחה - המשך ל-login
       req.logIn(user, (loginErr) => {
         if (loginErr) {
           console.error('❌ Error during login:', loginErr);
-          return res.redirect('http://localhost:3000/?error=login_failed');
+          return res.redirect(`${FRONTEND_URL}/?error=login_failed`);
         }
         
         // המשך ל-handler הבא
@@ -389,12 +392,12 @@ app.get('/auth/facebook/callback',
       req.session.save((err) => {
         if (err) {
           console.error('❌ Error saving session:', err);
-          return res.redirect('http://localhost:3000/?error=session_save');
+          return res.redirect(`${FRONTEND_URL}/?error=session_save`);
         }
         console.log('💾 Session saved, redirecting to dashboard...');
         // הוספת פרמטר שיאותת ל-Frontend שההתחברות הצליחה
         // NOTE: We do NOT fetch any data here - only establish session and redirect
-        res.redirect('http://localhost:3000/?auth_success=true');
+        res.redirect(`${FRONTEND_URL}/?auth_success=true`);
       });
     } catch (error: any) {
       console.error('❌ Error in OAuth callback handler:', error);
@@ -406,11 +409,11 @@ app.get('/auth/facebook/callback',
           error.code === 4 ||
           error.error?.code === 4) {
         console.error('⚠️ Rate limit error detected in callback handler');
-        return res.redirect('http://localhost:3000/?error=rate_limit_exceeded');
+        return res.redirect(`${FRONTEND_URL}/?error=rate_limit_exceeded`);
       }
       
       // Generic error
-      return res.redirect('http://localhost:3000/?error=callback_error');
+      return res.redirect(`${FRONTEND_URL}/?error=callback_error`);
     }
   }
 );
@@ -1535,12 +1538,12 @@ app.get('/auth/shopify/callback', async (req, res) => {
     // Verify state
     if (state !== req.session.shopifyState) {
       console.error('❌ Shopify state mismatch');
-      return res.redirect('http://localhost:3000/?error=shopify_state_mismatch');
+      return res.redirect(`${FRONTEND_URL}/?error=shopify_state_mismatch`);
     }
 
     if (!code || !shop) {
       console.error('❌ Missing code or shop in callback');
-      return res.redirect('http://localhost:3000/?error=shopify_oauth_failed');
+      return res.redirect(`${FRONTEND_URL}/?error=shopify_oauth_failed`);
     }
 
     const shopDomain = shop as string;
@@ -1561,7 +1564,7 @@ app.get('/auth/shopify/callback', async (req, res) => {
     if (!tokenResponse.ok) {
       const error = await tokenResponse.json().catch(() => ({ error: 'Unknown error' }));
       console.error('❌ Shopify token exchange failed:', error);
-      return res.redirect('http://localhost:3000/?error=shopify_token_exchange_failed');
+      return res.redirect(`${FRONTEND_URL}/?error=shopify_token_exchange_failed`);
     }
 
     const tokenData = await tokenResponse.json();
@@ -1602,13 +1605,13 @@ app.get('/auth/shopify/callback', async (req, res) => {
     req.session.save((err) => {
       if (err) {
         console.error('❌ Error saving session:', err);
-        return res.redirect('http://localhost:3000/?error=shopify_session_save');
+        return res.redirect(`${FRONTEND_URL}/?error=shopify_session_save`);
       }
-      res.redirect('http://localhost:3000/?shopify_success=true');
+      res.redirect(`${FRONTEND_URL}/?shopify_success=true`);
     });
   } catch (error: any) {
     console.error('❌ Error in Shopify callback:', error);
-    res.redirect('http://localhost:3000/?error=shopify_callback_error');
+    res.redirect(`${FRONTEND_URL}/?error=shopify_callback_error`);
   }
 });
 
