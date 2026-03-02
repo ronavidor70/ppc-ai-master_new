@@ -3,9 +3,14 @@ import session from 'express-session';
 import passport from 'passport';
 import { Strategy as FacebookStrategy } from 'passport-facebook';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import OpenAI from 'openai';
 import crypto from 'crypto';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1819,6 +1824,14 @@ app.get('/auth/shopify/logout', (req, res) => {
   delete req.session.shopifyShop;
   delete req.session.shopifyStoreName;
   res.json({ success: true });
+});
+
+// Serve static files from Vite build
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Catch-all: serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist', 'index.html'));
 });
 
 app.listen(Number(PORT), '0.0.0.0', () => {
