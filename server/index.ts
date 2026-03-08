@@ -37,6 +37,25 @@ const facebookAppSecret = process.env.FACEBOOK_APP_SECRET;
 const facebookRedirectUri = process.env.FACEBOOK_REDIRECT_URI;
 const sessionSecret = process.env.SESSION_SECRET;
 
+// Facebook OAuth scopes – used by passport.authenticate('facebook', { scope: [...] })
+// leads_retrieval is NOT included: it requires App Review approval. Use ADVANCED_FACEBOOK_SCOPES
+// only after Facebook grants the leads_retrieval permission.
+const BASE_FACEBOOK_SCOPES = [
+  'public_profile',
+  'email',
+  'ads_management',
+  'ads_read',
+  'business_management',
+  'pages_manage_ads',
+  'pages_read_engagement',
+  'pages_show_list',
+] as const;
+// For future use after App Review: switch passport.authenticate to use this instead.
+const ADVANCED_FACEBOOK_SCOPES = [
+  ...BASE_FACEBOOK_SCOPES,
+  'leads_retrieval', // enable only after Facebook App Review approves leads_retrieval
+] as const;
+
 // Shopify OAuth Configuration
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
@@ -319,17 +338,7 @@ app.get('/auth/facebook',
     next();
   },
   passport.authenticate('facebook', { 
-    scope: [
-      'public_profile',
-      'email',
-      'ads_management',
-      'ads_read',
-      'business_management',
-      'leads_retrieval',
-      'pages_manage_ads',
-      'pages_read_engagement',
-      'pages_show_list'
-    ]
+    scope: [...BASE_FACEBOOK_SCOPES],
   })
 );
 
