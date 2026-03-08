@@ -4,6 +4,7 @@ import { Campaign, CampaignStatus } from '../types';
 import { Icons, EXCHANGE_RATE } from '../constants';
 import { useTranslation } from '../App';
 import { openaiService } from '../services/openaiService';
+import { config } from '../config';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
@@ -12,9 +13,11 @@ interface CampaignDetailViewProps {
   campaign: Campaign;
   onBack: () => void;
   onUpdate: (campaign: Campaign) => void;
+  onToggleStatus?: (campaign: Campaign) => Promise<void>;
+  onRefreshData?: () => Promise<void>;
 }
 
-const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBack, onUpdate }) => {
+const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBack, onUpdate, onToggleStatus, onRefreshData }) => {
   const { t, dir, currency, lang } = useTranslation();
   const [aiInsight, setAiInsight] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(true);
@@ -49,21 +52,43 @@ const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBac
     return val.toLocaleString();
   };
 
-  const handleSaveEdit = () => {
-    onUpdate({
-      ...campaign,
-      name: editedName,
-      budget: Number(editedBudget)
-    });
+  const handleSaveEdit = async () => {
+    const newBudget = Number(editedBudget);
+    const budgetChanged = newBudget !== campaign.budget;
+
+    if (budgetChanged) {
+      const msg = lang === 'he'
+        ? `לאשר עדכון תקציב ל-${currency}${newBudget} בקמפיין "${campaign.name}"?`
+        : `Confirm budget update to ${currency}${newBudget} for campaign "${campaign.name}"?`;
+      if (!window.confirm(msg)) return;
+
+      try {
+        const res = await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/${campaign.id}/budget`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ budget: newBudget })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      } catch (e: any) {
+        alert(lang === 'he' ? `שגיאה: ${e.message}` : `Error: ${e.message}`);
+        return;
+      }
+      if (onRefreshData) await onRefreshData();
+    }
+
+    onUpdate({ ...campaign, name: editedName, budget: newBudget });
     setIsEditing(false);
   };
 
-  const toggleStatus = () => {
-    const newStatus = campaign.status === CampaignStatus.ACTIVE ? CampaignStatus.PAUSED : CampaignStatus.ACTIVE;
-    onUpdate({
-      ...campaign,
-      status: newStatus
-    });
+  const toggleStatus = async () => {
+    if (onToggleStatus) {
+      await onToggleStatus(campaign);
+    } else {
+      const newStatus = campaign.status === CampaignStatus.ACTIVE ? CampaignStatus.PAUSED : CampaignStatus.ACTIVE;
+      onUpdate({ ...campaign, status: newStatus });
+    }
   };
 
   const handleOptimizeRequest = async () => {
@@ -78,8 +103,28 @@ const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBac
     }
   };
 
-  const handleApplyOptimization = () => {
+  const handleApplyOptimization = async () => {
     if (!optProposal) return;
+    const msg = lang === 'he'
+      ? `לאשר עדכון תקציב ל-${currency}${optProposal.suggestedBudget} (המלצת AI)?`
+      : `Confirm budget update to ${currency}${optProposal.suggestedBudget} (AI recommendation)?`;
+    if (!window.confirm(msg)) return;
+
+    try {
+      const res = await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/${campaign.id}/budget`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ budget: optProposal.suggestedBudget })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (e: any) {
+      alert(lang === 'he' ? `שגיאה: ${e.message}` : `Error: ${e.message}`);
+      return;
+    }
+    if (onRefreshData) await onRefreshData();
+
     onUpdate({
       ...campaign,
       budget: optProposal.suggestedBudget,

@@ -15,6 +15,7 @@ import AIChatAssistant from './components/AIChatAssistant';
 import { Campaign, CampaignStatus, Platform, Language, SubscriptionInfo, PlanId, AdCreative, Lead, LeadStatus } from './types';
 import { Icons, TRANSLATIONS, LANGUAGES, PRICING_PLANS, EXCHANGE_RATE } from './constants';
 import { DataProvider, useData } from './contexts/DataContext';
+import { config } from './config';
 
 interface TranslationContextType {
   lang: Language;
@@ -33,7 +34,7 @@ export const useTranslation = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads, dateRange, setDateRangeType, setCustomDateRange } = useData();
+  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads, dateRange, setDateRangeType, setCustomDateRange, refreshData } = useData();
   const { t, lang } = useTranslation();
   const [activeTab, setActiveTab] = useState('dashboard');
   
@@ -104,14 +105,32 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const toggleCampaignStatus = (id: string) => {
-    setCampaigns(prev => prev.map(c => {
-      if (c.id === id) {
-        const newStatus = c.status === CampaignStatus.ACTIVE ? CampaignStatus.PAUSED : CampaignStatus.ACTIVE;
-        return { ...c, status: newStatus };
+  const toggleCampaignStatus = async (campaign: Campaign) => {
+    const isPause = campaign.status === CampaignStatus.ACTIVE;
+    const actionText = isPause ? (lang === 'he' ? 'להשהות' : 'pause') : (lang === 'he' ? 'להפעיל' : 'resume');
+    const msg = lang === 'he'
+      ? `האם לאשר ${actionText} את הקמפיין "${campaign.name}"?`
+      : `Confirm ${actionText} campaign "${campaign.name}"?`;
+    if (!window.confirm(msg)) return;
+
+    try {
+      const endpoint = isPause ? 'pause' : 'resume';
+      const res = await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/${campaign.id}/${endpoint}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
-      return c;
-    }));
+      const newStatus = isPause ? CampaignStatus.PAUSED : CampaignStatus.ACTIVE;
+      setCampaigns(prev => prev.map(c => c.id === campaign.id ? { ...c, status: newStatus } : c));
+      if (selectedCampaign?.id === campaign.id) setSelectedCampaign({ ...campaign, status: newStatus });
+      await refreshData();
+    } catch (e: any) {
+      alert(lang === 'he' ? `שגיאה: ${e.message}` : `Error: ${e.message}`);
+    }
   };
 
   const confirmDeleteCampaign = () => {
@@ -179,22 +198,26 @@ const AppContent: React.FC = () => {
             {activeTab === 'campaigns' && (
               <div className="max-w-7xl mx-auto space-y-6">
                 {!selectedCampaign && <CampaignsDateRangePicker dateRange={dateRange} setDateRangeType={setDateRangeType} setCustomDateRange={setCustomDateRange} />}
-                {selectedCampaign ? <CampaignDetailView campaign={selectedCampaign} onBack={() => setSelectedCampaign(null)} onUpdate={updateCampaign} /> : (
+                {selectedCampaign ? <CampaignDetailView campaign={selectedCampaign} onBack={() => setSelectedCampaign(null)} onUpdate={updateCampaign} onToggleStatus={toggleCampaignStatus} onRefreshData={refreshData} /> : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                     {campaigns.length === 0 && !isLoading ? (
                          <div className="col-span-full text-center py-20 text-slate-400 italic">
                              {t('noCampaignsFound') || "No campaigns found. Create your first campaign!"}
                          </div>
                     ) : (
-                        campaigns.map(c => (
-                        <CampaignCard 
-                            key={c.id} 
-                            campaign={c} 
-                            onViewAnalytics={() => handleViewAnalytics(c)} 
-                            onDelete={() => setCampaignToDelete(c.id)}
-                            onToggleStatus={() => toggleCampaignStatus(c.id)}
-                        />
-                        ))
+                        (() => {
+                          const isSalesAccount = campaigns.reduce((sum, x) => sum + (x.performance?.revenue || 0), 0) > 0;
+                          return campaigns.map(c => (
+                            <CampaignCard 
+                              key={c.id} 
+                              campaign={c} 
+                              isSalesAccount={isSalesAccount}
+                              onViewAnalytics={() => handleViewAnalytics(c)} 
+                              onDelete={() => setCampaignToDelete(c.id)}
+                              onToggleStatus={() => toggleCampaignStatus(c)}
+                            />
+                          ));
+                        })()
                     )}
                   </div>
                 )}
@@ -362,18 +385,9 @@ const CampaignsDateRangePicker: React.FC<{
   );
 };
 
-const CampaignCard = ({ campaign, onViewAnalytics, onDelete, onToggleStatus }: any) => {
+const CampaignCard = ({ campaign, isSalesAccount, onViewAnalytics, onDelete, onToggleStatus }: any) => {
   const { t, currency, lang } = useTranslation();
   const isActive = campaign.status === CampaignStatus.ACTIVE;
-  
-  // ✅ לוג לבדיקת הנתונים שמגיעים לקמפיין
-  React.useEffect(() => {
-    console.log(`🎴 CampaignCard rendered for: ${campaign.name}`, {
-      spend: campaign.performance?.spend,
-      leads: campaign.performance?.leads,
-      performance: campaign.performance
-    });
-  }, [campaign]);
   
   // ✅ פונקציה לעיצוב ערכים (המרת מטבע ופורמט) - כמו ב-Dashboard
   const formatValue = (val: number) => {
@@ -441,8 +455,10 @@ const CampaignCard = ({ campaign, onViewAnalytics, onDelete, onToggleStatus }: a
           <p className="font-black text-slate-800 text-lg">{currency}{formatValue(campaign.performance.spend || 0)}</p>
         </div>
         <div>
-          <p className="text-[10px] font-black text-slate-300 uppercase">{t('totalLeads')}</p>
-          <p className="font-black text-slate-800 text-lg">{campaign.performance.leads || 0}</p>
+          <p className="text-[10px] font-black text-slate-300 uppercase">{isSalesAccount ? t('totalSales') : t('totalLeads')}</p>
+          <p className="font-black text-slate-800 text-lg">
+            {isSalesAccount ? (campaign.performance.purchases ?? 0) : (campaign.performance.leads ?? 0)}
+          </p>
         </div>
       </div>
 

@@ -9,6 +9,17 @@ import 'dotenv/config';
 import OpenAI from 'openai';
 import crypto from 'crypto';
 
+declare module 'express-session' {
+  interface SessionData {
+    shopifyState?: string;
+    shopifyShop?: string;
+    shopifyAccessToken?: string;
+    shopifyStoreName?: string;
+  }
+}
+
+const sessionMiddleware = session as unknown as (opts: session.SessionOptions) => express.RequestHandler;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -56,14 +67,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // הוספתי - חשוב ל-OAuth callbacks
 
 // Session setup
-app.use(session({
+app.use(sessionMiddleware({
   secret: sessionSecret || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    secure: false, // true רק ב-HTTPS
+    secure: false,
     httpOnly: true, 
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
@@ -81,6 +92,23 @@ function getDateRangeSince(range: string): string {
 
 function getDateRangeUntil(): string {
   return new Date().toISOString().split('T')[0];
+}
+
+function formatDateInTimezone(dateStr: string, timezone: string): string {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    
+    return new Intl.DateTimeFormat('en-CA', { 
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(date);
+  } catch (e) {
+    console.warn('Error formatting date in timezone:', e);
+    return dateStr;
+  }
 }
 
 // Rate Limiting and Retry Logic for Facebook API
@@ -297,6 +325,7 @@ app.get('/auth/facebook',
       'ads_management',
       'ads_read',
       'business_management',
+      'leads_retrieval',
       'pages_manage_ads',
       'pages_read_engagement',
       'pages_show_list'
@@ -806,17 +835,18 @@ app.get('/api/facebook/leads', async (req, res) => {
 // These mirror services/metaMetrics.ts; kept inline here because server/index.ts
 // is a Node process that does not share the Vite/frontend module graph.
 
+// Aligned with metaMetrics.ts – single source of truth for action types
 const LEAD_TYPES_SERVER = new Set([
   'lead', 'omni_lead', 'onsite_conversion.lead_grouped', 'onsite_conversion.lead',
   'offsite_conversion.fb_pixel_lead', 'offsite_conversion.lead',
-  'fb_lead_gen_form_submit', 'lead_gen_form_submit',
-  'submit_application', 'complete_registration', 'contact',
+  'fb_lead_gen_form_submit', 'lead_gen_form_submit', 'submit_application',
+  'complete_registration', 'contact'
 ]);
 
 const PURCHASE_TYPES_SERVER = new Set([
   'purchase', 'omni_purchase', 'onsite_conversion.purchase',
   'offsite_conversion.fb_pixel_purchase', 'offsite_conversion.purchase',
-  'fb_mobile_purchase', 'fb_offsite_conversion_purchase',
+  'fb_mobile_purchase', 'fb_offsite_conversion_purchase'
 ]);
 
 const WHATSAPP_TYPES_SERVER = new Set([
@@ -1041,11 +1071,14 @@ app.get('/api/facebook/campaigns/:campaignId/insights', async (req, res) => {
       }
     }
 
-    const timeRange = JSON.stringify({ since: startDate, until: endDate });
+    const timeRange = JSON.stringify({ 
+      since: formatDateInTimezone(startDate, timezone), 
+      until: formatDateInTimezone(endDate, timezone) 
+    });
 
     // action_breakdowns=action_type is intentionally absent – see META_FIELDS comment above.
     // Attribution windows match Ads Manager default (7d_click + 1d_view).
-    const url = `https://graph.facebook.com/v19.0/${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    const url = `https://graph.facebook.com/v19.0/${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
     
     console.log(`🔍 Fetching insights for campaign ${campaignId} from ${startDate} to ${endDate}...`);
     console.log(`🌍 Timezone: ${timezone}`);
@@ -1080,6 +1113,7 @@ app.post('/api/facebook/campaigns/insights/batch', async (req, res) => {
   }
   const ids = campaignIds.slice(0, FACEBOOK_BATCH_LIMIT);
   try {
+    let timezone = 'America/Los_Angeles';
     let currency = 'USD';
     let cleanAccountId = accountId.startsWith('act_') ? accountId.slice(4) : accountId;
     try {
@@ -1088,13 +1122,17 @@ app.post('/api/facebook/campaigns/insights/batch', async (req, res) => {
         {},
         true
       );
+      if (accountData.timezone_name) timezone = accountData.timezone_name;
       if (accountData.currency) currency = accountData.currency;
     } catch (_) {}
-    const timeRange = JSON.stringify({ since: startDate, until: endDate });
+    const timeRange = JSON.stringify({ 
+      since: formatDateInTimezone(startDate, timezone), 
+      until: formatDateInTimezone(endDate, timezone) 
+    });
     // action_breakdowns=action_type excluded (see META_FIELDS). Attribution = Ads Manager default.
     const batch = ids.map((campaignId: string) => ({
       method: 'GET',
-      relative_url: `${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true`
+      relative_url: `${campaignId}/insights?level=campaign&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&use_unified_attribution_setting=true&time_increment=1&include_summary=true`
     }));
     const body = new URLSearchParams({ access_token: accessToken, batch: JSON.stringify(batch) }).toString();
     const timeSinceLast = Date.now() - lastRequestTime;
@@ -1178,10 +1216,13 @@ app.get('/api/facebook/adaccounts/:accountId/insights', async (req, res) => {
       console.warn('⚠️ Could not fetch account timezone/currency, using default:', tzError);
     }
 
-    const timeRange = JSON.stringify({ since: startDate, until: endDate });
+    const timeRange = JSON.stringify({ 
+      since: formatDateInTimezone(startDate, timezone), 
+      until: formatDateInTimezone(endDate, timezone) 
+    });
 
     // level=account for 1:1 alignment with Ads Manager account-level totals.
-    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
     
     console.log(`🔍 Fetching insights for account ${accountId} from ${startDate} to ${endDate}...`);
     console.log(`🌍 Timezone: ${timezone}`);
@@ -1253,6 +1294,7 @@ app.get('/api/debug/meta-insights', async (req, res) => {
     });
   }
   try {
+    let timezone = 'America/Los_Angeles';
     let currency = 'USD';
     try {
       const accountData = await fetchWithRateLimit(
@@ -1260,10 +1302,14 @@ app.get('/api/debug/meta-insights', async (req, res) => {
         {},
         true
       );
+      if (accountData.timezone_name) timezone = accountData.timezone_name;
       if (accountData.currency) currency = accountData.currency;
     } catch (_) {}
-    const timeRange = JSON.stringify({ since: startDate, until: endDate });
-    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&action_report_time=conversion&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
+    const timeRange = JSON.stringify({ 
+      since: formatDateInTimezone(startDate, timezone), 
+      until: formatDateInTimezone(endDate, timezone) 
+    });
+    const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights?level=account&fields=${META_FIELDS}&time_range=${encodeURIComponent(timeRange)}&action_attribution_windows=${encodeURIComponent(META_ATTR_WIN)}&use_unified_attribution_setting=true&time_increment=1&include_summary=true&access_token=${accessToken}`;
     const data = await fetchWithRateLimit(url, {}, false);
     if (data.error) {
       return res.status(400).json({ error: data.error.message });
@@ -1477,7 +1523,7 @@ app.post('/api/facebook/campaigns/:campaignId/pause', async (req, res) => {
     const data = await fetchWithRateLimit(
       `https://graph.facebook.com/v19.0/${campaignId}?status=PAUSED&access_token=${accessToken}`,
       { method: 'POST' },
-      false // Don't cache POST requests
+      false
     );
     
     if (data.error) {
@@ -1490,7 +1536,33 @@ app.post('/api/facebook/campaigns/:campaignId/pause', async (req, res) => {
   }
 });
 
-// Campaign Budget Update Endpoint
+// Campaign Resume Endpoint
+app.post('/api/facebook/campaigns/:campaignId/resume', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  const accessToken = (req.user as any).accessToken;
+  const campaignId = req.params.campaignId;
+
+  try {
+    const data = await fetchWithRateLimit(
+      `https://graph.facebook.com/v19.0/${campaignId}?status=ACTIVE&access_token=${accessToken}`,
+      { method: 'POST' },
+      false
+    );
+    
+    if (data.error) {
+      return res.status(400).json({ error: data.error.message });
+    }
+    
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Campaign Budget Update Endpoint – Meta requires budget at Ad Set level (in cents)
 app.post('/api/facebook/campaigns/:campaignId/budget', async (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ error: 'Not authenticated' });
@@ -1500,26 +1572,106 @@ app.post('/api/facebook/campaigns/:campaignId/budget', async (req, res) => {
   const campaignId = req.params.campaignId;
   const { budget } = req.body;
 
+  if (!budget || isNaN(Number(budget))) {
+    return res.status(400).json({ error: 'Valid budget amount is required' });
+  }
+
+  const budgetCents = Math.round(Number(budget) * 100);
+
   try {
-    // הערה: עדכון תקציב בפייסבוק דורש עדכון של Ad Set, לא הקמפיין עצמו
-    // כאן זה דוגמה - ייתכן שתצטרך להתאים לפי המבנה שלך
-    // ננסה לעדכן את הקמפיין עם daily_budget
-    const data = await fetchWithRateLimit(
-      `https://graph.facebook.com/v19.0/${campaignId}?daily_budget=${budget}&access_token=${accessToken}`,
-      { method: 'POST' },
-      false // Don't cache POST requests
+    const adSetsData = await fetchWithRateLimit(
+      `https://graph.facebook.com/v19.0/${campaignId}/adsets?fields=id,daily_budget&access_token=${accessToken}`,
+      {},
+      false
     );
-    
-    if (data.error) {
-      // אם זה לא עובד, נחזיר שגיאה אבל נסמן שהפעולה נרשמה
-      console.warn('Budget update may require Ad Set update:', data.error.message);
-      return res.status(400).json({ 
-        error: data.error.message,
-        note: 'Budget updates typically require updating the Ad Set, not the campaign directly'
+
+    if (adSetsData.error || !adSetsData.data || adSetsData.data.length === 0) {
+      return res.status(400).json({
+        error: adSetsData.error?.message || 'No ad sets found for this campaign',
+        note: 'Budget is set per Ad Set. This campaign has no ad sets or the API returned an error.'
       });
     }
-    
-    res.json({ success: true });
+
+    const adSets = adSetsData.data;
+    const results: { adSetId: string; success: boolean; error?: string }[] = [];
+
+    for (const adSet of adSets) {
+      const data = await fetchWithRateLimit(
+        `https://graph.facebook.com/v19.0/${adSet.id}?daily_budget=${budgetCents}&access_token=${accessToken}`,
+        { method: 'POST' },
+        false
+      );
+      results.push({
+        adSetId: adSet.id,
+        success: !data.error,
+        error: data.error?.message
+      });
+    }
+
+    const allOk = results.every(r => r.success);
+    if (allOk) {
+      res.json({ success: true, updatedAdSets: results.length });
+    } else {
+      res.status(207).json({
+        success: false,
+        partial: true,
+        results,
+        message: 'Some ad sets failed to update'
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create Campaign Endpoint – creates a new campaign in Meta
+app.post('/api/facebook/campaigns/create', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  const accessToken = (req.user as any).accessToken;
+  const { accountId, name, objective, status } = req.body;
+
+  if (!accountId || !name || !objective) {
+    return res.status(400).json({ error: 'accountId, name, and objective are required' });
+  }
+
+  let cleanAccountId = String(accountId).replace(/^act_/, '');
+
+  const validObjectives = [
+    'OUTCOME_AWARENESS', 'OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS', 'OUTCOME_SALES', 'OUTCOME_TRAFFIC',
+    'LINK_CLICKS', 'CONVERSIONS', 'MESSAGES', 'VIDEO_VIEWS', 'PAGE_LIKES'
+  ];
+  if (!validObjectives.includes(objective)) {
+    return res.status(400).json({ error: `objective must be one of: ${validObjectives.join(', ')}` });
+  }
+
+  const campaignStatus = status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED';
+
+  try {
+    const params = new URLSearchParams({
+      name,
+      objective,
+      status: campaignStatus,
+      access_token: accessToken
+    });
+
+    const data = await fetchWithRateLimit(
+      `https://graph.facebook.com/v19.0/act_${cleanAccountId}/campaigns`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      },
+      false
+    );
+
+    if (data.error) {
+      return res.status(400).json({ error: data.error.message });
+    }
+
+    res.json({ success: true, campaignId: data.id });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

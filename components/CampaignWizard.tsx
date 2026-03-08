@@ -1,9 +1,10 @@
-
 import React, { useState } from 'react';
 import { useTranslation } from '../App';
 import { Campaign, CampaignStatus, Platform, CampaignStrategy } from '../types';
 import { Icons } from '../constants';
 import { openaiService } from '../services/openaiService';
+import { metaService } from '../services/metaService';
+import { config } from '../config';
 
 interface CampaignWizardProps {
   onCampaignCreated: (campaign: Campaign) => void;
@@ -97,22 +98,65 @@ const CampaignWizard: React.FC<CampaignWizardProps> = ({ onCampaignCreated }) =>
     }
   };
 
+  const goalToMetaObjective: Record<string, string> = {
+    'Leads': 'OUTCOME_LEADS', 'leads': 'OUTCOME_LEADS',
+    'Traffic': 'LINK_CLICKS', 'traffic': 'LINK_CLICKS',
+    'Sales': 'CONVERSIONS', 'sales': 'CONVERSIONS', 'Conversions': 'CONVERSIONS',
+    'Awareness': 'OUTCOME_AWARENESS', 'awareness': 'OUTCOME_AWARENESS',
+    'Engagement': 'OUTCOME_ENGAGEMENT', 'engagement': 'OUTCOME_ENGAGEMENT',
+    'Messages': 'MESSAGES', 'messages': 'MESSAGES',
+  };
+
   const handlePublish = async () => {
     if (!strategy) return;
+    const campaignName = strategy.name || formData.name;
+    const budget = Number(formData.budget);
+
+    const msg = lang === 'he'
+      ? `לאשר יצירת קמפיין "${campaignName}" (תקציב: ${currency}${budget})?`
+      : `Confirm creating campaign "${campaignName}" (budget: ${currency}${budget})?`;
+    if (!window.confirm(msg)) return;
+
     setIsLoading(true);
     try {
+      let campaignId: string | null = null;
+
+      if (platform === Platform.FACEBOOK && metaService.isConnected()) {
+        const conn = metaService.getConnection();
+        const accountId = conn?.selectedAccountId;
+        if (accountId) {
+          const objective = goalToMetaObjective[formData.goal] || 'OUTCOME_LEADS';
+          const res = await fetch(`${config.apiBaseUrl}/api/facebook/campaigns/create`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accountId,
+              name: campaignName,
+              objective,
+              status: 'PAUSED'
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          campaignId = data.campaignId;
+        }
+      }
+
       const newCampaign: Campaign = {
-        id: Math.random().toString(36).substr(2, 9),
-        name: strategy.name || formData.name,
+        id: campaignId || Math.random().toString(36).substr(2, 9),
+        name: campaignName,
         objective: formData.goal,
         platforms: [platform!],
-        budget: Number(formData.budget),
-        status: CampaignStatus.ACTIVE,
+        budget,
+        status: CampaignStatus.PAUSED,
         creatives: [],
         performance: { spend: 0, leads: 0, ctr: 0, cpl: 0, optimizations: 0 },
         createdAt: new Date().toISOString()
       };
       onCampaignCreated(newCampaign);
+    } catch (e: any) {
+      alert(lang === 'he' ? `שגיאה: ${e.message}` : `Error: ${e.message}`);
     } finally {
       setIsLoading(false);
     }

@@ -8,8 +8,34 @@ import {
 } from 'recharts';
 import { useData } from '../contexts/DataContext';
 
+// Platform tab config: id, label, icon, isConnected
+type PlatformTabId = 'facebook' | 'google' | 'tiktok' | 'linkedin' | 'taboola' | 'x';
+
+const PlatformNotConnected: React.FC<{ platformId: PlatformTabId; name: string; icon: React.ReactNode; lang: string }> = ({ name, icon, lang }) => (
+  <div className="flex flex-col items-center justify-center py-20 px-6 rounded-[32px] border-2 border-dashed border-slate-200 bg-slate-50/50">
+    <div className="p-6 bg-white rounded-full shadow-sm border border-slate-100 mb-6 opacity-70 [&>svg]:w-14 [&>svg]:h-14">
+      {icon}
+    </div>
+    <h3 className="text-xl font-black text-slate-800 mb-2 text-center">
+      {lang === 'he' ? `${name} לא מחובר` : `${name} not connected`}
+    </h3>
+    <p className="text-slate-500 text-sm text-center max-w-md mb-8">
+      {lang === 'he' 
+        ? 'חבר את חשבון המודעות שלך כדי לראות נתוני ביצועים, קמפיינים והמלצות AI.'
+        : 'Connect your ad account to view performance data, campaigns, and AI recommendations.'}
+    </p>
+    <button
+      onClick={() => { window.location.hash = 'settings'; }}
+      className="px-6 py-3 bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-lg"
+    >
+      {lang === 'he' ? 'הגדרות חיבורים' : 'Connection Settings'}
+    </button>
+  </div>
+);
+
 const Dashboard: React.FC = () => {
   const { t, dir, currency, lang } = useTranslation();
+  const [selectedPlatform, setSelectedPlatform] = useState<PlatformTabId>('facebook');
   
   const { 
     accountInsights, 
@@ -30,6 +56,18 @@ const Dashboard: React.FC = () => {
     error,
     clearError
   } = useData();
+
+  const platformTabs: { id: PlatformTabId; name: string; nameHe: string; icon: React.ReactNode; isConnected: boolean }[] = [
+    { id: 'facebook', name: 'Meta (FB/IG)', nameHe: 'מטא (פייסבוק/אינסטגרם)', icon: <Icons.Facebook className="w-5 h-5" />, isConnected },
+    { id: 'google', name: 'Google Ads', nameHe: 'גוגל אדס', icon: <Icons.Google className="w-5 h-5" />, isConnected: false },
+    { id: 'tiktok', name: 'TikTok Ads', nameHe: 'טיקטוק', icon: <Icons.TikTok className="w-5 h-5" />, isConnected: false },
+    { id: 'linkedin', name: 'LinkedIn', nameHe: 'לינקדאין', icon: <Icons.LinkedIn className="w-5 h-5" />, isConnected: false },
+    { id: 'taboola', name: 'Taboola', nameHe: 'טאבולה', icon: <Icons.Taboola className="w-5 h-5" />, isConnected: false },
+    { id: 'x', name: 'X (Twitter)', nameHe: 'X (טוויטר)', icon: <Icons.XIcon className="w-5 h-5" />, isConnected: false },
+  ];
+
+  const selectedTabConfig = platformTabs.find(p => p.id === selectedPlatform);
+  const isSelectedPlatformConnected = selectedTabConfig?.isConnected ?? false;
 
   const loadingStageLabels: Record<string, { he: string; en: string }> = {
     campaigns: { he: 'טוען קמפיינים...', en: 'Loading campaigns...' },
@@ -244,39 +282,6 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Not loading and not connected → show Connect Facebook
-  if (!hasFacebookConnection) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-blue-50 border border-blue-200 rounded-[32px] p-8 text-center">
-             <div className="flex flex-col items-center gap-4">
-            <div className="p-4 bg-blue-100 rounded-full">
-              <Icons.Facebook className="w-12 h-12 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-xl font-black text-slate-800 mb-2">
-                {lang === 'he' ? 'חבר את חשבון פייסבוק' : 'Connect Your Facebook Account'}
-              </h3>
-              <p className="text-slate-600 mb-6">
-                {lang === 'he' 
-                  ? 'על מנת לראות את הנתונים האמיתיים מפייסבוק, אנא חבר את חשבון המודעות שלך.'
-                  : 'To view real Facebook data, please connect your ad account.'}
-              </p>
-              <button
-                onClick={() => {
-                  window.location.hash = 'settings';
-                }}
-                className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black uppercase tracking-widest hover:bg-blue-700 transition-all"
-              >
-                {lang === 'he' ? 'התחברות לחשבונות' : 'Connect to Accounts'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const timeRangeOptions = [
     { value: 'today', label: lang === 'he' ? 'היום' : 'Today' },
     { value: 'yesterday', label: lang === 'he' ? 'אתמול' : 'Yesterday' },
@@ -287,6 +292,41 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Platform Tabs */}
+      <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm p-2">
+        <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent" style={{ scrollbarWidth: 'thin' }}>
+          {platformTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setSelectedPlatform(tab.id)}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
+                selectedPlatform === tab.id
+                  ? 'bg-slate-800 text-white shadow-lg'
+                  : tab.isConnected
+                    ? 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                    : 'bg-slate-50/50 text-slate-400 hover:bg-slate-100/80'
+              }`}
+            >
+              {tab.icon}
+              <span>{lang === 'he' ? tab.nameHe : tab.name}</span>
+              {tab.isConnected && (
+                <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title={lang === 'he' ? 'מחובר' : 'Connected'} />
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content: Platform not connected → empty state */}
+      {!isSelectedPlatformConnected ? (
+        <PlatformNotConnected
+          platformId={selectedPlatform}
+          name={lang === 'he' ? (selectedTabConfig?.nameHe ?? '') : (selectedTabConfig?.name ?? '')}
+          icon={selectedTabConfig?.icon ?? <Icons.Logo className="w-16 h-16 text-slate-400" />}
+          lang={lang}
+        />
+      ) : (
+        <>
       {/* Header Controls: Account Selector + Time Range */}
       {hasFacebookConnection && (
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-[24px] border border-slate-200 shadow-sm">
@@ -426,9 +466,6 @@ const Dashboard: React.FC = () => {
       )}
 
       {/* Rest of dashboard - loading is handled by early return above */}
-      <>
-
-      {/* ... Rest of the dashboard (StatCards, Charts, Tables) ... */}
       {/* נתונים אמיתיים מחשבון מודעות – ללא אחוזי טרנד מזויפים */}
       {hasFacebookConnection && accountInsights && (
         <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-2">
@@ -634,6 +671,7 @@ const Dashboard: React.FC = () => {
         )}
       </div>
         </>
+      )}
     </div>
   );
 };
