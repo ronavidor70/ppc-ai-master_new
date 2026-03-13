@@ -34,7 +34,7 @@ export const useTranslation = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads, dateRange, setDateRangeType, setCustomDateRange, refreshData } = useData();
+  const { filteredCampaigns, isConnected, isLoading, leads: contextLeads, dateRange, setDateRangeType, setCustomDateRange, refreshData, accountInsights } = useData();
   const { t, lang } = useTranslation();
   const [activeTab, setActiveTab] = useState('dashboard');
   
@@ -214,7 +214,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'campaigns' && (
               <div className="max-w-7xl mx-auto space-y-6">
                 {!selectedCampaign && <CampaignsDateRangePicker dateRange={dateRange} setDateRangeType={setDateRangeType} setCustomDateRange={setCustomDateRange} />}
-                {selectedCampaign ? <CampaignDetailView campaign={selectedCampaign} onBack={() => setSelectedCampaign(null)} onUpdate={updateCampaign} onToggleStatus={toggleCampaignStatus} onRefreshData={refreshData} /> : (
+                {selectedCampaign ? <CampaignDetailView campaign={selectedCampaign} accountCurrency={accountInsights?.currency} onBack={() => setSelectedCampaign(null)} onUpdate={updateCampaign} onToggleStatus={toggleCampaignStatus} onRefreshData={refreshData} /> : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                     {campaigns.length === 0 && !isLoading ? (
                          <div className="col-span-full text-center py-20 text-slate-400 italic">
@@ -227,6 +227,7 @@ const AppContent: React.FC = () => {
                             <CampaignCard 
                               key={c.id} 
                               campaign={c} 
+                              accountCurrency={accountInsights?.currency}
                               isSalesAccount={isSalesAccount}
                               onViewAnalytics={() => handleViewAnalytics(c)} 
                               onDelete={() => setCampaignToDelete(c.id)}
@@ -401,14 +402,14 @@ const CampaignsDateRangePicker: React.FC<{
   );
 };
 
-const CampaignCard = ({ campaign, isSalesAccount, onViewAnalytics, onDelete, onToggleStatus }: any) => {
+const CampaignCard = ({ campaign, accountCurrency, isSalesAccount, onViewAnalytics, onDelete, onToggleStatus }: any) => {
   const { t, currency, lang } = useTranslation();
   const isActive = campaign.status === CampaignStatus.ACTIVE;
-  
-  // ✅ פונקציה לעיצוב ערכים (המרת מטבע ופורמט) - כמו ב-Dashboard
+
+  // המרת מטבע רק כשהנתונים ב-USD והממשק בשקלים. אם החשבון ב-ILS – מציגים כפי שהם.
   const formatValue = (val: number) => {
-    if (lang === 'he') return Math.round(val * EXCHANGE_RATE).toLocaleString();
-    return val.toLocaleString();
+    if (accountCurrency === 'USD' && lang === 'he') return Math.round(val * EXCHANGE_RATE).toLocaleString();
+    return Math.round(val).toLocaleString();
   };
   
   const platformIcons: Record<string, React.ReactNode> = {

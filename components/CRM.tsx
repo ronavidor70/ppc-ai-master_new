@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { Lead, LeadStatus } from '../types';
 import { Icons, COLORS, EXCHANGE_RATE } from '../constants';
@@ -13,42 +12,75 @@ interface CRMProps {
 
 type ImportTab = 'manual' | 'csv' | 'excel';
 
-const parseFileToLeads = (rows: string[][]): Lead[] => {
-  if (!rows.length) return [];
-  const header = rows[0].map(h => String(h || '').toLowerCase().trim());
-  const col = (name: string[]) => {
-    const i = header.findIndex(h => name.some(n => h.includes(n) || h === n));
+/** Field keys that can be mapped from CSV/Excel columns */
+export type LeadFieldKey = 'name' | 'email' | 'phone' | 'value' | 'campaign' | 'skip';
+
+/** Detect which column index maps to which field (same logic as before, for initial suggestion) */
+const detectColumnMapping = (header: string[]): (LeadFieldKey | null)[] => {
+  const normalized = header.map(h => String(h || '').toLowerCase().trim());
+  const col = (names: string[]) => {
+    const i = normalized.findIndex(h => names.some(n => h.includes(n) || h === n));
     return i >= 0 ? i : -1;
   };
+  const mapping: (LeadFieldKey | null)[] = normalized.map(() => null);
   const nameIdx = col(['name', 'full_name', 'fullname', 'שם']);
   const emailIdx = col(['email', 'mail', 'אימייל']);
   const phoneIdx = col(['phone', 'tel', 'mobile', 'נייד', 'טלפון']);
   const valueIdx = col(['value', 'estimated_value', 'שווי']);
   const campaignIdx = col(['campaign', 'source', 'קמפיין', 'מקור']);
+  if (nameIdx >= 0) mapping[nameIdx] = 'name';
+  if (emailIdx >= 0) mapping[emailIdx] = 'email';
+  if (phoneIdx >= 0) mapping[phoneIdx] = 'phone';
+  if (valueIdx >= 0) mapping[valueIdx] = 'value';
+  if (campaignIdx >= 0) mapping[campaignIdx] = 'campaign';
+  return mapping;
+};
 
+/** Parse rows into leads using explicit column mapping. Ensures unique IDs and ordered createdAt. */
+const parseRowsWithMapping = (
+  rows: string[][],
+  mapping: (LeadFieldKey | null)[],
+  importSource: string,
+  lang: string
+): Lead[] => {
+  if (!rows.length) return [];
+  const baseTime = Date.now();
   const leads: Lead[] = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    const name = (nameIdx >= 0 ? row[nameIdx] : row[0]) || '';
-    const email = (emailIdx >= 0 ? row[emailIdx] : row[1]) || '';
-    const phone = (phoneIdx >= 0 ? row[phoneIdx] : row[2]) || '';
+    let name = '';
+    let email = '';
+    let phone = '';
+    let value = 0;
+    let campaignName = importSource;
+    mapping.forEach((field, colIdx) => {
+      if (!field || field === 'skip') return;
+      const val = String((row[colIdx] ?? '') || '').trim();
+      if (field === 'name') name = val;
+      else if (field === 'email') email = val;
+      else if (field === 'phone') phone = val;
+      else if (field === 'value') value = parseFloat(val) || 0;
+      else if (field === 'campaign') campaignName = val || importSource;
+    });
     if (!name && !email) continue;
     leads.push({
-      id: `custom_${Date.now()}_${i}`,
-      name: String(name).trim(),
-      email: String(email).trim(),
-      phone: String(phone).trim(),
+      id: `custom_${baseTime}_${i}`,
+      name,
+      email,
+      phone,
       status: LeadStatus.NEW,
       campaignId: 'import',
-      campaignName: campaignIdx >= 0 ? String(row[campaignIdx] || '').trim() || 'Import' : 'Import',
-      value: valueIdx >= 0 ? parseFloat(String(row[valueIdx] || 0)) || 0 : 0,
-      createdAt: new Date().toISOString(),
+      campaignName: campaignName || (lang === 'he' ? 'ייבוא' : 'Import'),
+      value,
+      createdAt: new Date(baseTime + i * 1000).toISOString(),
       aiScore: 0,
       aiInsight: ''
     });
   }
   return leads;
 };
+
+const PREVIEW_ROWS = 5;
 
 const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
   const { t, dir, currency, lang } = useTranslation();
@@ -59,6 +91,11 @@ const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
   const [importTab, setImportTab] = useState<ImportTab>('manual');
   const [manualLead, setManualLead] = useState({ name: '', email: '', phone: '', value: 0, campaignName: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Import flow: after file select → show mapping step (like Facebook/Lead platforms)
+  const [importStep, setImportStep] = useState<'select' | 'mapping'>('select');
+  const [fileParseResult, setFileParseResult] = useState<{ headers: string[]; rows: string[][]; fileName: string } | null>(null);
+  const [columnMapping, setColumnMapping] = useState<(LeadFieldKey | null)[]>([]);
 
   const filteredLeads = leads.filter(l => {
     const matchesSearch = 
@@ -129,7 +166,7 @@ const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !onAddLeads) return;
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -155,11 +192,16 @@ const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
           const ws = wb.Sheets[wb.SheetNames[0]];
           rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' });
         }
-        const parsed = parseFileToLeads(rows);
-        if (parsed.length > 0) {
-          onAddLeads(parsed);
-          setShowAddModal(false);
+        if (!rows.length) {
+          alert(lang === 'he' ? 'הקובץ ריק או ללא שורות.' : 'File is empty or has no rows.');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
         }
+        const headers = rows[0].map(h => String(h ?? '').trim());
+        const suggested = detectColumnMapping(headers);
+        setFileParseResult({ headers, rows, fileName: file.name });
+        setColumnMapping(suggested);
+        setImportStep('mapping');
       } catch (err) {
         console.error(err);
         alert(lang === 'he' ? 'שגיאה בקריאת הקובץ' : 'Error reading file');
@@ -168,6 +210,33 @@ const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
     };
     if (file.name.endsWith('.csv')) reader.readAsText(file);
     else reader.readAsBinaryString(file);
+  };
+
+  const handleConfirmImport = () => {
+    if (!fileParseResult || !onAddLeads) return;
+    const hasNameOrEmail = columnMapping.some(m => m === 'name' || m === 'email');
+    if (!hasNameOrEmail) {
+      alert(lang === 'he' ? 'יש למפות לפחות עמודה אחת לשם או לאימייל.' : 'Map at least one column to Name or Email.');
+      return;
+    }
+    const importSource = lang === 'he' ? 'ייבוא' : 'Import';
+    const parsed = parseRowsWithMapping(fileParseResult.rows, columnMapping, importSource, lang);
+    if (parsed.length === 0) {
+      alert(lang === 'he' ? 'לא נמצאו שורות עם שם או אימייל.' : 'No rows with name or email found.');
+      return;
+    }
+    onAddLeads(parsed);
+    setFileParseResult(null);
+    setColumnMapping([]);
+    setImportStep('select');
+    setShowAddModal(false);
+  };
+
+  const handleCloseAddModal = () => {
+    setShowAddModal(false);
+    setImportStep('select');
+    setFileParseResult(null);
+    setColumnMapping([]);
   };
 
   const openFileDialog = (accept: string) => {
@@ -482,106 +551,202 @@ const CRM: React.FC<CRMProps> = ({ leads, onUpdateLead, onAddLeads }) => {
       {showAddModal && onAddLeads && (
         <>
           <div className="fixed inset-0 z-[120] flex items-center justify-center">
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
-            <div className={`relative bg-white rounded-[32px] shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col ${dir === 'rtl' ? 'text-right' : 'text-left'}`}>
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={handleCloseAddModal} />
+            <div className={`relative bg-white rounded-[32px] shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col ${dir === 'rtl' ? 'text-right' : 'text-left'}`}>
               <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                <h3 className="text-lg font-black text-slate-800">{t('addLeadsTitle')}</h3>
-                <button onClick={() => setShowAddModal(false)} className="p-2 text-slate-400 hover:text-slate-600">
+                <h3 className="text-lg font-black text-slate-800">
+                  {importStep === 'mapping' ? (lang === 'he' ? 'אישור מיפוי עמודות' : 'Confirm column mapping') : t('addLeadsTitle')}
+                </h3>
+                <button onClick={handleCloseAddModal} className="p-2 text-slate-400 hover:text-slate-600">
                   <Icons.X />
                 </button>
               </div>
               <div className="p-6 space-y-6 overflow-y-auto">
-                <div className="flex gap-2">
-                  {(['manual', 'csv', 'excel'] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setImportTab(tab)}
-                      className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                        importTab === tab ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
-                    >
-                      {tab === 'manual' ? t('addLeadsManual') : tab === 'csv' ? t('addLeadsCSV') : t('addLeadsExcel')}
-                    </button>
-                  ))}
-                </div>
-
-                {importTab === 'manual' && (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'שם' : 'Name'} *</label>
-                      <input
-                        type="text"
-                        value={manualLead.name}
-                        onChange={e => setManualLead(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                        placeholder={lang === 'he' ? 'שם מלא' : 'Full name'}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Email *</label>
-                      <input
-                        type="email"
-                        value={manualLead.email}
-                        onChange={e => setManualLead(prev => ({ ...prev, email: e.target.value }))}
-                        className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                        placeholder="email@example.com"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'טלפון' : 'Phone'}</label>
-                      <input
-                        type="tel"
-                        value={manualLead.phone}
-                        onChange={e => setManualLead(prev => ({ ...prev, phone: e.target.value }))}
-                        className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                        placeholder={lang === 'he' ? '050-1234567' : '+1234567890'}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'שווי מוערך' : 'Estimated Value'}</label>
-                      <input
-                        type="number"
-                        value={manualLead.value || ''}
-                        onChange={e => setManualLead(prev => ({ ...prev, value: parseFloat(e.target.value) || 0 }))}
-                        className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'מקור / קמפיין' : 'Campaign / Source'}</label>
-                      <input
-                        type="text"
-                        value={manualLead.campaignName}
-                        onChange={e => setManualLead(prev => ({ ...prev, campaignName: e.target.value }))}
-                        className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                        placeholder={lang === 'he' ? 'אופציונלי' : 'Optional'}
-                      />
-                    </div>
-                    <button
-                      onClick={handleAddManual}
-                      disabled={!manualLead.name.trim() || !manualLead.email.trim()}
-                      className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                      {lang === 'he' ? 'הוסף ליד' : 'Add Lead'}
-                    </button>
-                  </div>
-                )}
-
-                {(importTab === 'csv' || importTab === 'excel') && (
-                  <div className="space-y-4">
-                    <p className="text-sm text-slate-500">
+                {importStep === 'mapping' && fileParseResult ? (
+                  /* Step 2: Mapping & preview (like Facebook / lead platforms) */
+                  <div className="space-y-6">
+                    <p className="text-sm text-slate-600">
                       {lang === 'he'
-                        ? 'העלה קובץ CSV או Excel עם עמודות: שם, אימייל, טלפון (אופציונלי), שווי, קמפיין. השורה הראשונה צריכה להכיל כותרות.'
-                        : 'Upload a CSV or Excel file with columns: name, email, phone (optional), value, campaign. First row should be headers.'}
+                        ? 'המערכת זיהתה את העמודות בקובץ. אשר שהמיפוי נכון או שנה לפי הצורך, ואז ייבא את הלידים.'
+                        : 'We detected the columns in your file. Confirm the mapping is correct or change it, then import.'}
                     </p>
-                    <button
-                      onClick={() => openFileDialog(importTab === 'csv' ? '.csv' : '.xlsx,.xls')}
-                      className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-600 font-bold text-sm hover:border-blue-300 hover:bg-blue-50/50 transition-all flex items-center justify-center gap-2"
-                    >
-                      <Icons.CRM className="w-5 h-5" />
-                      {importTab === 'csv' ? t('addLeadsCSV') : t('addLeadsExcel')}
-                    </button>
+                    <p className="text-xs text-slate-400 font-medium">
+                      {fileParseResult.fileName} · {fileParseResult.rows.length - 1} {lang === 'he' ? 'שורות' : 'rows'}
+                    </p>
+                    <div className="space-y-3">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        {lang === 'he' ? 'מיפוי עמודה → שדה ב-CRM' : 'Column → CRM field'}
+                      </p>
+                      <div className="grid gap-2 max-h-48 overflow-y-auto">
+                        {fileParseResult.headers.map((header, idx) => (
+                          <div key={idx} className="flex items-center gap-3 flex-wrap">
+                            <span className="text-sm font-bold text-slate-700 min-w-[120px] truncate" title={header}>
+                              {header || `(${lang === 'he' ? 'ריק' : 'empty'})`}
+                            </span>
+                            <span className="text-slate-300">→</span>
+                            <select
+                              value={columnMapping[idx] ?? 'skip'}
+                              onChange={e => {
+                                const v = e.target.value as LeadFieldKey | 'skip';
+                                setColumnMapping(prev => {
+                                  const next = [...prev];
+                                  next[idx] = v === 'skip' ? null : v;
+                                  return next;
+                                });
+                              }}
+                              className="flex-1 min-w-[140px] py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            >
+                              <option value="skip">{lang === 'he' ? 'לא לייבא' : "Don't import"}</option>
+                              <option value="name">{lang === 'he' ? 'שם' : 'Name'}</option>
+                              <option value="email">{lang === 'he' ? 'אימייל' : 'Email'}</option>
+                              <option value="phone">{lang === 'he' ? 'טלפון' : 'Phone'}</option>
+                              <option value="value">{lang === 'he' ? 'שווי' : 'Value'}</option>
+                              <option value="campaign">{lang === 'he' ? 'קמפיין / מקור' : 'Campaign / Source'}</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border border-slate-100 rounded-2xl overflow-hidden">
+                      <p className="px-4 py-2 bg-slate-50 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                        {lang === 'he' ? 'תצוגה מקדימה (5 שורות ראשונות)' : 'Preview (first 5 rows)'}
+                      </p>
+                      <div className="overflow-x-auto max-h-40 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50/50">
+                              {fileParseResult.headers.slice(0, 6).map((h, i) => (
+                                <th key={i} className="px-3 py-2 text-left font-bold text-slate-500 text-[10px] uppercase truncate max-w-[100px]">
+                                  {h || `C${i + 1}`}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fileParseResult.rows.slice(1, 1 + PREVIEW_ROWS).map((row, ri) => (
+                              <tr key={ri} className="border-b border-slate-50">
+                                {fileParseResult.headers.slice(0, 6).map((_, ci) => (
+                                  <td key={ci} className="px-3 py-2 text-slate-700 truncate max-w-[100px]">
+                                    {String(row[ci] ?? '')}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => { setImportStep('select'); setFileParseResult(null); setColumnMapping([]); }}
+                        className="px-4 py-3 rounded-xl text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-all"
+                      >
+                        {lang === 'he' ? 'חזור' : 'Back'}
+                      </button>
+                      <button
+                        onClick={handleConfirmImport}
+                        className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all"
+                      >
+                        {lang === 'he' ? 'אשר וייבא לידים' : 'Confirm & import leads'}
+                      </button>
+                    </div>
                   </div>
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      {(['manual', 'csv', 'excel'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          onClick={() => { setImportTab(tab); setImportStep('select'); setFileParseResult(null); }}
+                          className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                            importTab === tab ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                          }`}
+                        >
+                          {tab === 'manual' ? t('addLeadsManual') : tab === 'csv' ? t('addLeadsCSV') : t('addLeadsExcel')}
+                        </button>
+                      ))}
+                    </div>
+
+                    {importTab === 'manual' && (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'שם' : 'Name'} *</label>
+                          <input
+                            type="text"
+                            value={manualLead.name}
+                            onChange={e => setManualLead(prev => ({ ...prev, name: e.target.value }))}
+                            className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            placeholder={lang === 'he' ? 'שם מלא' : 'Full name'}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Email *</label>
+                          <input
+                            type="email"
+                            value={manualLead.email}
+                            onChange={e => setManualLead(prev => ({ ...prev, email: e.target.value }))}
+                            className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            placeholder="email@example.com"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'טלפון' : 'Phone'}</label>
+                          <input
+                            type="tel"
+                            value={manualLead.phone}
+                            onChange={e => setManualLead(prev => ({ ...prev, phone: e.target.value }))}
+                            className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            placeholder={lang === 'he' ? '050-1234567' : '+1234567890'}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'שווי מוערך' : 'Estimated Value'}</label>
+                          <input
+                            type="number"
+                            value={manualLead.value || ''}
+                            onChange={e => setManualLead(prev => ({ ...prev, value: parseFloat(e.target.value) || 0 }))}
+                            className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">{lang === 'he' ? 'מקור / קמפיין' : 'Campaign / Source'}</label>
+                          <input
+                            type="text"
+                            value={manualLead.campaignName}
+                            onChange={e => setManualLead(prev => ({ ...prev, campaignName: e.target.value }))}
+                            className="w-full py-3 px-4 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                            placeholder={lang === 'he' ? 'אופציונלי' : 'Optional'}
+                          />
+                        </div>
+                        <button
+                          onClick={handleAddManual}
+                          disabled={!manualLead.name.trim() || !manualLead.email.trim()}
+                          className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                          {lang === 'he' ? 'הוסף ליד' : 'Add Lead'}
+                        </button>
+                      </div>
+                    )}
+
+                    {(importTab === 'csv' || importTab === 'excel') && (
+                      <div className="space-y-4">
+                        <p className="text-sm text-slate-500">
+                          {lang === 'he'
+                            ? 'העלה קובץ CSV או Excel. השורה הראשונה צריכה להכיל כותרות. אחרי ההעלאה תראה מיפוי עמודות לאישור (כמו בפייסבוק).'
+                            : 'Upload a CSV or Excel file. First row should be headers. After upload you will confirm column mapping (like Facebook lead import).'}
+                        </p>
+                        <button
+                          onClick={() => openFileDialog(importTab === 'csv' ? '.csv' : '.xlsx,.xls')}
+                          className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-600 font-bold text-sm hover:border-blue-300 hover:bg-blue-50/50 transition-all flex items-center justify-center gap-2"
+                        >
+                          <Icons.CRM className="w-5 h-5" />
+                          {importTab === 'csv' ? t('addLeadsCSV') : t('addLeadsExcel')}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

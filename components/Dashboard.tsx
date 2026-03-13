@@ -128,9 +128,13 @@ const Dashboard: React.FC = () => {
     optimizations: acc.optimizations + (c.performance?.optimizations || 0)
   }), { spend: 0, leads: 0, purchases: 0, revenue: 0, optimizations: 0 });
 
-  const formatValue = (val: number) => {
-    if (lang === 'he') return Math.round(val * EXCHANGE_RATE).toLocaleString();
-    return val.toLocaleString();
+  // המרת מטבע רק כשהנתונים ב-USD והממשק מציג בשקלים. אם החשבון כבר ב-ILS – מציגים כפי שהם.
+  const formatValue = (val: number, isMonetary = true) => {
+    const dataCurrency = accountInsights?.currency || 'USD';
+    if (isMonetary && dataCurrency === 'USD' && lang === 'he') {
+      return Math.round(val * EXCHANGE_RATE).toLocaleString();
+    }
+    return Math.round(val).toLocaleString();
   };
 
   // Logic to determine what to show - based on revenue
@@ -514,23 +518,23 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="bg-white rounded-xl p-3 border border-slate-100">
               <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'חשיפות' : 'Impressions'}</span>
-              <span className="font-black text-slate-800">{formatValue(accountInsights.impressions || 0)}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.impressions || 0, false)}</span>
             </div>
             <div className="bg-white rounded-xl p-3 border border-slate-100">
               <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'קליקים' : 'Clicks'}</span>
-              <span className="font-black text-slate-800">{formatValue(accountInsights.clicks || 0)}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.clicks || 0, false)}</span>
             </div>
             <div className="bg-white rounded-xl p-3 border border-slate-100">
               <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'לידים (טפסים+אתר)' : 'Leads (forms+site)'}</span>
-              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.lead ?? accountInsights.leads ?? 0)}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.lead ?? accountInsights.leads ?? 0, false)}</span>
             </div>
             <div className="bg-white rounded-xl p-3 border border-slate-100">
               <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'וואטסאפ' : 'WhatsApp'}</span>
-              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.whatsapp ?? 0)}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.whatsapp ?? 0, false)}</span>
             </div>
             <div className="bg-white rounded-xl p-3 border border-slate-100">
               <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'he' ? 'רכישות' : 'Purchases'}</span>
-              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.purchase ?? accountInsights.purchases ?? 0)}</span>
+              <span className="font-black text-slate-800">{formatValue(accountInsights.conversions?.purchase ?? accountInsights.purchases ?? 0, false)}</span>
             </div>
           </div>
         </div>

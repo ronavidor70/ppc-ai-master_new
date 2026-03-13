@@ -11,13 +11,14 @@ import {
 
 interface CampaignDetailViewProps {
   campaign: Campaign;
+  accountCurrency?: string;
   onBack: () => void;
   onUpdate: (campaign: Campaign) => void;
   onToggleStatus?: (campaign: Campaign) => Promise<void>;
   onRefreshData?: () => Promise<void>;
 }
 
-const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBack, onUpdate, onToggleStatus, onRefreshData }) => {
+const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, accountCurrency, onBack, onUpdate, onToggleStatus, onRefreshData }) => {
   const { t, dir, currency, lang } = useTranslation();
   const [aiInsight, setAiInsight] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(true);
@@ -45,11 +46,12 @@ const CampaignDetailView: React.FC<CampaignDetailViewProps> = ({ campaign, onBac
     fetchInsight();
   }, [campaign, lang]);
 
+  // המרת מטבע רק כשהנתונים ב-USD והממשק בשקלים. אם החשבון ב-ILS – מציגים כפי שהם.
   const formatValue = (val: number) => {
-    if (lang === 'he') {
+    if (accountCurrency === 'USD' && lang === 'he') {
       return Math.round(val * EXCHANGE_RATE).toLocaleString();
     }
-    return val.toLocaleString();
+    return Math.round(val).toLocaleString();
   };
 
   const handleSaveEdit = async () => {
