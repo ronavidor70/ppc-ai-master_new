@@ -1,5 +1,6 @@
 
 import OpenAI from "openai";
+import { config } from "../config";
 import { CampaignStrategy, AdCreative, Platform, Language, LandingPage, Campaign } from "../types";
 
 // Function to get the OpenAI client
@@ -107,50 +108,32 @@ export const openaiService = {
     return parsed.creatives || [];
   },
 
-  // Generates ad images using DALL-E 3 (OpenAI's image generation)
+  // Generates ad images using Flux.1 (Fal.ai) via backend – background only, no text in image
   async generateAdImage(userPrompt: string, style: string, lang: Language): Promise<string> {
-    const client = getAiClient();
-    
-    // Step 1: Optimize the prompt for DALL-E
-    const optimizationResponse = await client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert at creating detailed image generation prompts for DALL-E 3."
-        },
-        {
-          role: "user",
-          content: `Translate and optimize this image request for a professional ad. 
-          Input: ${userPrompt} 
-          Style: ${style}
-          Rules:
-          1. Write a highly detailed English prompt for a high-end commercial photo/graphic suitable for DALL-E 3.
-          2. If there is text in the input (especially Hebrew), describe how it should appear visually.
-          3. Focus on aesthetics, premium lighting, and commercial appeal.
-          4. Keep the prompt under 400 characters (DALL-E 3 limit).`
-        }
-      ],
-      temperature: 0.7,
+    const body: { prompt: string; style: string; lang: Language } = {
+      prompt: userPrompt.trim(),
+      style,
+      lang,
+    };
+
+    const response = await fetch(`${config.apiBaseUrl}/api/creative/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
     });
 
-    const optimizedPrompt = optimizationResponse.choices[0]?.message?.content || userPrompt;
-
-    // Step 2: Generate the image with DALL-E 3
-    const imageResponse = await client.images.generate({
-      model: "dall-e-3",
-      prompt: optimizedPrompt,
-      size: "1024x1024",
-      quality: "standard",
-      n: 1,
-    });
-
-    const imageUrl = imageResponse.data[0]?.url;
-    if (!imageUrl) {
-      throw new Error("No image URL received from DALL-E API");
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Creative image API error: ${response.status} ${text}`);
     }
-    
-    return imageUrl;
+
+    const data = await response.json();
+    if (!data.imageUrl) {
+      throw new Error('No imageUrl returned from creative image API');
+    }
+
+    return data.imageUrl as string;
   },
 
   // Provides platform-specific suggestions for the wizard

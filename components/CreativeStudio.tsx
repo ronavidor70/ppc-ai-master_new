@@ -1,9 +1,9 @@
-
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTranslation } from '../App';
 import { Campaign, AdCreative } from '../types';
 import { Icons } from '../constants';
 import { openaiService } from '../services/openaiService';
+import html2canvas from 'html2canvas';
 
 interface CreativeStudioProps {
   campaigns: Campaign[];
@@ -18,6 +18,8 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [overlayText, setOverlayText] = useState('');
+  const adRef = useRef<HTMLDivElement | null>(null);
 
   const styles = [
     { id: 'modern', label: t('styles.modern') },
@@ -39,10 +41,10 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
       console.error("Image Generation Error:", err);
       const errorStr = typeof err === 'string' ? err : (err.message || JSON.stringify(err));
       
-      if (errorStr.includes("API key") || errorStr.includes("OPENAI_API_KEY")) {
+      if (errorStr.includes("API key") || errorStr.includes("FAL_KEY") || errorStr.includes("Creative image API")) {
         setError(lang === 'he' 
-          ? "מפתח API לא נמצא. אנא צור קובץ .env עם OPENAI_API_KEY=sk-..." 
-          : "API key not found. Please create a .env file with OPENAI_API_KEY=sk-...");
+          ? "שגיאה ב-API של יצירת תמונות. ודא ש-FAL_KEY מוגדר בשרת." 
+          : "Image API error. Ensure FAL_KEY is set on the server.");
       } else {
         setError(lang === 'he' 
           ? `שגיאה ביצירת התמונה: ${errorStr}` 
@@ -55,17 +57,39 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
 
   const handleAddToCampaign = () => {
     if (!generatedImageUrl || !selectedCampaignId) return;
-    
+
     const newCreative: AdCreative = {
-      headline: prompt.substring(0, 30) + '...',
+      headline: overlayText || prompt.substring(0, 30) + '...',
       description: prompt,
       cta: 'LEARN MORE',
       imageUrl: generatedImageUrl
     };
-    
+
     onAddCreative(selectedCampaignId, newCreative);
     setGeneratedImageUrl(null);
     setPrompt('');
+    setOverlayText('');
+  };
+
+  const handleDownloadAd = async () => {
+    if (!adRef.current || !generatedImageUrl) return;
+    try {
+      const canvas = await html2canvas(adRef.current, {
+        useCORS: true,
+        backgroundColor: null,
+        scale: window.devicePixelRatio > 1 ? 2 : 1.5,
+      });
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = lang === 'he' ? 'מודעה-ppc-ai.png' : 'ppc-ai-ad.png';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Failed to download ad image:', err);
+      alert(lang === 'he' ? 'אירעה שגיאה בהורדת המודעה. נסה שוב.' : 'Failed to download ad. Please try again.');
+    }
   };
 
   return (
@@ -76,17 +100,17 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
           <p className="text-slate-500 text-sm">{t('studioSub')}</p>
         </div>
         <div className="flex items-center gap-3">
-          <a 
-            href="https://platform.openai.com/docs/guides/images" 
-            target="_blank" 
+          <a
+            href="https://fal.ai/models/fal-ai/flux/schnell"
+            target="_blank"
             rel="noopener noreferrer"
             className="text-[9px] font-black text-slate-400 hover:text-blue-500 uppercase tracking-widest transition-colors"
           >
-            DALL-E 3 Info
+            FLUX Info
           </a>
           <div className="px-4 py-2 bg-blue-50 border border-blue-100 rounded-2xl flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">ChatGPT GPT-4o + DALL-E 3</span>
+            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">FLUX.1 via fal.ai</span>
           </div>
         </div>
       </div>
@@ -127,13 +151,27 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
           </div>
 
           <div className="space-y-4">
-            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('describeImage')}</label>
-            <textarea 
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
+              {lang === 'he' ? 'תיאור תמונת רקע (בלי טקסט)' : 'Background description (no text)'}
+            </label>
+            <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder={lang === 'he' ? 'תאר את המודעה (למשל: נעלי ריצה כחולות עם הטקסט ״מבצע מטורף״)' : 'Describe ad (e.g., Blue running shoes with text "SALE")'}
+              placeholder={lang === 'he' ? 'תאר את הרקע בלבד: סצנה, אווירה, צבעים (ללא טקסט בכלל)' : 'Describe only the background: scene, mood, colors (no text at all)'}
               className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium min-h-[140px] focus:outline-none focus:ring-2 focus:ring-blue-100"
               dir="auto"
+            />
+          </div>
+          <div className="space-y-4">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
+              {lang === 'he' ? 'טקסט המודעה שיופיע על התמונה' : 'Ad text overlay'}
+            </label>
+            <textarea
+              value={overlayText}
+              onChange={(e) => setOverlayText(e.target.value)}
+              placeholder={lang === 'he' ? 'לדוגמה: מבצע מטורף! עד 50% הנחה' : 'e.g. Crazy Sale! Up to 50% off'}
+              className="w-full px-5 py-4 bg-white border border-slate-100 rounded-2xl text-sm font-bold min-h-[80px] focus:outline-none focus:ring-2 focus:ring-blue-100"
+              dir={dir}
             />
           </div>
 
@@ -163,8 +201,8 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
           </button>
           
           <p className="text-[9px] text-center text-slate-400 uppercase font-black tracking-tighter leading-relaxed">
-            Note: DALL-E 3 image generation powered by OpenAI.<br/>
-            Requires valid OPENAI_API_KEY in .env file.
+            Image generation powered by FLUX.1 via fal.ai.<br/>
+            Server requires valid FAL_KEY in environment variables.
           </p>
         </div>
 
@@ -185,20 +223,49 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
               </div>
             </div>
           ) : generatedImageUrl ? (
-            <div className="w-full h-full flex flex-col relative">
-              <img src={generatedImageUrl} alt="Generated" className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-8 text-center">
-                <div className="bg-white/10 backdrop-blur-md p-6 rounded-[32px] border border-white/20 space-y-6 transform translate-y-4 group-hover:translate-y-0 transition-transform">
-                  <p className="text-white font-bold text-sm">Visual optimized for conversions.</p>
-                  <button 
-                    onClick={handleAddToCampaign}
-                    disabled={!selectedCampaignId}
-                    className="w-full px-8 py-4 bg-white text-blue-600 rounded-2xl font-black shadow-2xl hover:scale-105 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+            <div className="w-full h-full flex flex-col gap-4 p-4">
+              <div
+                ref={adRef}
+                className="relative w-full flex-1 min-h-[320px] rounded-3xl overflow-hidden shadow-xl bg-black"
+              >
+                <img
+                  src={generatedImageUrl}
+                  alt="Generated"
+                  className="w-full h-full object-cover"
+                  crossOrigin="anonymous"
+                />
+                <div className="absolute inset-0 flex items-center justify-center p-6">
+                  <div
+                    className="max-w-[80%] px-6 py-3 bg-black/65 text-white rounded-2xl shadow-2xl text-center"
+                    style={{
+                      fontWeight: 900,
+                      letterSpacing: lang === 'he' ? '0.05em' : '0.08em',
+                      fontSize: 'clamp(18px, 2.5vw, 36px)',
+                      direction: dir,
+                    }}
                   >
-                    <Icons.CheckCircle />
-                    <span className="uppercase tracking-widest">{t('addToCampaign')}</span>
-                  </button>
+                    {overlayText || (lang === 'he' ? 'מבצע מטורף!' : 'Big Sale!')}
+                  </div>
                 </div>
+              </div>
+              <div className="flex flex-wrap gap-3 justify-between items-center">
+                <button
+                  onClick={handleAddToCampaign}
+                  disabled={!selectedCampaignId}
+                  className="flex-1 min-w-[160px] px-6 py-4 bg-white text-blue-600 rounded-2xl font-black shadow-2xl hover:scale-105 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                >
+                  <Icons.CheckCircle />
+                  <span className="uppercase tracking-widest">{t('addToCampaign')}</span>
+                </button>
+                <button
+                  onClick={handleDownloadAd}
+                  className="flex-1 min-w-[160px] px-6 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-2xl hover:scale-105 transition-all flex items-center justify-center gap-3"
+                >
+                  <Icons.Download />
+                  <span className="uppercase tracking-widest">
+                    {lang === 'he' ? 'הורד מודעה' : 'Download Ad'}
+                  </span>
+                </button>
               </div>
             </div>
           ) : (

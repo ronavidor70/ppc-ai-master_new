@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import OpenAI from 'openai';
+import { fal } from '@fal-ai/client';
 import crypto from 'crypto';
 
 declare module 'express-session' {
@@ -29,6 +30,11 @@ const PORT = process.env.PORT || 3000;
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
+});
+
+// Fal.ai (Flux image generation)
+fal.config({
+  credentials: process.env.FAL_KEY,
 });
 
 // בדיקת משתני סביבה בתחילת הקובץ
@@ -1357,6 +1363,58 @@ app.get('/auth/logout', (req, res) => {
   req.logout(() => {
     res.json({ success: true });
   });
+});
+
+// Creative Studio: generate background image via Fal.ai (Flux)
+app.post('/api/creative/image', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  try {
+    const { prompt, style, lang } = req.body as {
+      prompt: string;
+      style?: string;
+      lang?: 'he' | 'en';
+    };
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Missing prompt' });
+    }
+
+    const fullPrompt = [
+      'Ultra-realistic commercial background image with no text at all.',
+      'Absolutely NO letters, NO typography, NO logos, NO UI, NO watermarks.',
+      style ? `Visual style: ${style}.` : '',
+      `Scene description (from user, may be Hebrew): ${prompt}`,
+    ].filter(Boolean).join(' ');
+
+    const result = await fal.subscribe('fal-ai/flux/schnell', {
+      input: {
+        prompt: fullPrompt,
+        image_size: 'landscape_4_3',
+        guidance_scale: 3.5,
+        num_inference_steps: 4,
+        num_images: 1,
+        output_format: 'jpeg',
+      },
+      logs: false,
+    });
+
+    const data = result.data as { images?: Array<{ url?: string }> };
+    const imageUrl = data?.images?.[0]?.url;
+
+    if (!imageUrl) {
+      console.error('Fal response missing image URL:', data);
+      return res.status(500).json({ error: 'No image URL returned from Fal' });
+    }
+
+    return res.json({ imageUrl });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to generate image with Fal';
+    console.error('Fal image generation error:', err);
+    return res.status(500).json({ error: message });
+  }
 });
 
 // AI Chat Endpoint
