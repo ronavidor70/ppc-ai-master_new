@@ -55,13 +55,24 @@ const AppContent: React.FC = () => {
     setCampaigns(filteredCampaigns);
   }, [filteredCampaigns]);
 
-  // Use leads from context instead of mock data
-  const [leads, setLeads] = useState<Lead[]>([]);
+  // Use leads from context + custom leads (manual/CSV/Excel import)
+  const CUSTOM_LEADS_KEY = 'crm_custom_leads';
+  const [customLeads, setCustomLeads] = useState<Lead[]>(() => {
+    try {
+      const raw = localStorage.getItem(CUSTOM_LEADS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
 
-  useEffect(() => {
-    // Sync with leads from context
-    setLeads(contextLeads);
-  }, [contextLeads]);
+  const leads = [...contextLeads, ...customLeads];
+
+  const addLeads = (newLeads: Lead[]) => {
+    setCustomLeads(prev => {
+      const merged = [...prev, ...newLeads];
+      localStorage.setItem(CUSTOM_LEADS_KEY, JSON.stringify(merged));
+      return merged;
+    });
+  };
 
   // Hash routing support
   useEffect(() => {
@@ -144,9 +155,14 @@ const AppContent: React.FC = () => {
   };
 
   const updateLead = (updatedLead: Lead) => {
-    setLeads(prev => prev.map(l => l.id === updatedLead.id ? updatedLead : l));
-    // שמירה ב-LocalStorage
     localStorage.setItem(`lead_status_${updatedLead.id}`, updatedLead.status);
+    if (customLeads.some(l => l.id === updatedLead.id)) {
+      setCustomLeads(prev => {
+        const next = prev.map(l => l.id === updatedLead.id ? updatedLead : l);
+        localStorage.setItem(CUSTOM_LEADS_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
   };
 
   const handleAddCreativeToCampaign = (campaignId: string, creative: AdCreative) => {
@@ -190,7 +206,7 @@ const AppContent: React.FC = () => {
             )}
             {activeTab === 'crm' && (
               <div className="max-w-7xl mx-auto">
-                <CRM leads={leads} onUpdateLead={updateLead} />
+                <CRM leads={leads} onUpdateLead={updateLead} onAddLeads={addLeads} />
               </div>
             )}
             {activeTab === 'campaign-wizard' && <CampaignWizard onCampaignCreated={handleCampaignCreated} />}
