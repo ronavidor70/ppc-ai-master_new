@@ -77,6 +77,7 @@ console.log('Facebook App ID:', facebookAppId ? facebookAppId.substring(0, 5) + 
 console.log('Facebook App Secret:', facebookAppSecret ? '***' + facebookAppSecret.substring(facebookAppSecret.length - 4) : '❌ NOT SET');
 console.log('Facebook Redirect URI:', facebookRedirectUri || '❌ NOT SET');
 console.log('Session Secret:', sessionSecret ? 'SET' : '❌ NOT SET');
+console.log('FAL_KEY:', process.env.FAL_KEY ? (process.env.FAL_KEY.substring(0, 8) + '...' + process.env.FAL_KEY.slice(-4)) : '❌ NOT SET');
 
 // Frontend URL for redirects (OAuth callbacks, etc.)
 const FRONTEND_URL = process.env.VITE_FRONTEND_URL || 'https://ppc-ai-master-new.onrender.com';
@@ -1371,6 +1372,11 @@ app.post('/api/creative/image', async (req, res) => {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
+  if (!process.env.FAL_KEY) {
+    return res.status(503).json({ error: 'FAL_KEY is not configured on the server' });
+  }
+  fal.config({ credentials: process.env.FAL_KEY });
+
   try {
     const { prompt, style, lang } = req.body as {
       prompt: string;
@@ -1389,6 +1395,7 @@ app.post('/api/creative/image', async (req, res) => {
       `Scene description (from user, may be Hebrew): ${prompt}`,
     ].filter(Boolean).join(' ');
 
+    fal.config({ credentials: process.env.FAL_KEY });
     const result = await fal.subscribe('fal-ai/flux/schnell', {
       input: {
         prompt: fullPrompt,
