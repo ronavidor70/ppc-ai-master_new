@@ -1427,7 +1427,11 @@ app.post('/api/creative/image', async (req, res) => {
   }
 });
 
-// Creative Studio: generate landing page code via Claude 3.5 Sonnet (React + Tailwind)
+// Creative Studio: generate landing page code via Claude (React + Tailwind)
+// Model configurable via LANDING_PAGE_MODEL (e.g. claude-3-5-sonnet-20240620 or @anthropic/... for Portkey)
+const LANDING_PAGE_MODEL = process.env.LANDING_PAGE_MODEL || 'claude-3-5-sonnet-20240620';
+const LANDING_PAGE_MAX_TOKENS = Math.min(Math.max(parseInt(process.env.LANDING_PAGE_MAX_TOKENS || '4096', 10), 1024), 8192);
+
 app.post('/api/creative/landing-page', async (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ error: 'Not authenticated' });
@@ -1453,8 +1457,8 @@ RULES:
 - Return ONLY valid, raw React JSX code starting with 'import React'. No markdown blockquotes, no explanations. Do NOT include ReactDOM.render, just export default function App().`;
 
     const message = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 8192,
+      model: LANDING_PAGE_MODEL,
+      max_tokens: LANDING_PAGE_MAX_TOKENS,
       system: systemPrompt,
       messages: [
         {
@@ -1479,9 +1483,29 @@ RULES:
 
     return res.json({ code });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to generate landing page';
+    const errObj = err as { status?: number; error?: { type?: string; message?: string }; message?: string };
+    const status = errObj.status;
+    const msg = errObj.message || errObj.error?.message || String(err);
+    const errorType = errObj.error?.type || '';
+
+    // Model not found / 404 / deprecated
+    const isModelError = status === 404 ||
+      errorType === 'not_found_error' ||
+      errorType === 'model_not_found' ||
+      msg.toLowerCase().includes('model') && (msg.includes('404') || msg.includes('not found') || msg.includes('not_found'));
+
+    if (isModelError) {
+      console.error('Claude landing page - LLM model error:', { status, errorType, message: msg, model: LANDING_PAGE_MODEL });
+      return res.status(400).json({
+        error: 'LLM model not found or not configured correctly',
+        details: `Model "${LANDING_PAGE_MODEL}" may be deprecated or invalid. Set LANDING_PAGE_MODEL in your .env (e.g. claude-3-5-sonnet-20240620 or @anthropic/claude-3-5-sonnet-20240620 for Portkey).`
+      });
+    }
+
     console.error('Claude landing page error:', err);
-    return res.status(500).json({ error: message });
+    return res.status(500).json({
+      error: msg || 'Failed to generate landing page'
+    });
   }
 });
 
