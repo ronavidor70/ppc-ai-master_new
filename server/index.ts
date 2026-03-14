@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { fal } from '@fal-ai/client';
 import crypto from 'crypto';
 
@@ -30,6 +31,11 @@ const PORT = process.env.PORT || 3000;
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
+});
+
+// Initialize Anthropic client (Claude for landing page generation)
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
 });
 
 // Fal.ai (Flux image generation)
@@ -1389,21 +1395,18 @@ app.post('/api/creative/image', async (req, res) => {
     }
 
     const fullPrompt = [
-      'Ultra-realistic commercial background image with no text at all.',
-      'Absolutely NO letters, NO typography, NO logos, NO UI, NO watermarks.',
-      style ? `Visual style: ${style}.` : '',
-      `Scene description (from user, may be Hebrew): ${prompt}`,
+      'Ultra-professional commercial ad background, premium quality, hyper-realistic, cinematic lighting, studio-grade composition, no text, no letters, no typography, no logos, no UI, no watermarks.',
+      style ? `Visual style: ${style}, polished designer-quality.` : '',
+      `Scene (user description, may be Hebrew): ${prompt}`,
     ].filter(Boolean).join(' ');
 
     fal.config({ credentials: process.env.FAL_KEY });
-    const result = await fal.subscribe('fal-ai/flux/schnell', {
+    const result = await fal.subscribe('fal-ai/flux-2-pro', {
       input: {
         prompt: fullPrompt,
-        image_size: 'landscape_4_3',
-        guidance_scale: 3.5,
-        num_inference_steps: 4,
-        num_images: 1,
-        output_format: 'jpeg',
+        image_size: 'landscape_16_9',
+        safety_tolerance: '2',
+        output_format: 'png',
       },
       logs: false,
     });
@@ -1420,6 +1423,121 @@ app.post('/api/creative/image', async (req, res) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to generate image with Fal';
     console.error('Fal image generation error:', err);
+    return res.status(500).json({ error: message });
+  }
+});
+
+// Creative Studio: generate landing page code via Claude 3.5 Sonnet (React + Tailwind)
+app.post('/api/creative/landing-page', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server' });
+  }
+
+  try {
+    const { prompt } = req.body as { prompt: string };
+
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'Missing or invalid prompt' });
+    }
+
+    const systemPrompt = `You are an elite React/Tailwind frontend developer. Create an ultra-modern, premium landing page (Base 44 / SaaS style).
+RULES:
+- Use deep contrast, glassmorphism (bg-white/10 backdrop-blur), and subtle gradients.
+- Include a Hero section, Features grid (bento-box style), Testimonials, and a strong CTA.
+- Use 'lucide-react' for all icons.
+- Use generous spacing (py-24, gap-8, leading-relaxed).
+- Return ONLY valid, raw React JSX code starting with 'import React'. No markdown blockquotes, no explanations. Do NOT include ReactDOM.render, just export default function App().`;
+
+    const message = await anthropic.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: `Create a premium landing page for: ${prompt.trim()}`
+        }
+      ]
+    });
+
+    const textBlock = message.content.find((b: { type: string }) => b.type === 'text') as { type: 'text'; text: string } | undefined;
+    if (!textBlock || typeof textBlock.text !== 'string') {
+      return res.status(500).json({ error: 'No code returned from Claude' });
+    }
+
+    let code = textBlock.text.trim();
+    // Strip markdown code fence if present
+    if (code.startsWith('```')) {
+      const match = code.match(/^```(?:jsx?|javascript)?\s*\n?([\s\S]*?)```$/m);
+      if (match) code = match[1].trim();
+      else code = code.replace(/^```[\w]*\n?/, '').replace(/```\s*$/, '').trim();
+    }
+
+    return res.json({ code });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to generate landing page';
+    console.error('Claude landing page error:', err);
+    return res.status(500).json({ error: message });
+  }
+});
+
+// Creative Studio: generate video via Fal.ai (Pixverse v5.5 - 1080p, ultra-realistic)
+app.post('/api/creative/video', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  if (!process.env.FAL_KEY) {
+    return res.status(503).json({ error: 'FAL_KEY is not configured on the server' });
+  }
+  fal.config({ credentials: process.env.FAL_KEY });
+
+  try {
+    const { prompt, aspectRatio = '16:9', duration = 8 } = req.body as {
+      prompt: string;
+      aspectRatio?: string;
+      duration?: number;
+    };
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Missing prompt' });
+    }
+
+    const falAspectRatio = aspectRatio === '9:16' ? '9:16' : aspectRatio === '1:1' ? '1:1' : aspectRatio === '4:3' ? '4:3' : aspectRatio === '3:4' ? '3:4' : '16:9';
+    const falDuration = duration === 10 ? '10' : duration === 8 ? '8' : '5';
+
+    const fullPrompt = [
+      'Cinematic, hyper-realistic, ultra-high quality, professional video production, 4K-like detail, stunning visuals, photorealistic, dramatic lighting, premium commercial ad quality.',
+      `Scene: ${prompt}`,
+    ].join(' ');
+
+    const result = await fal.subscribe('fal-ai/pixverse/v5.5/text-to-video', {
+      input: {
+        prompt: fullPrompt,
+        aspect_ratio: falAspectRatio,
+        resolution: '1080p',
+        duration: falDuration,
+        negative_prompt: 'blurry, low quality, low resolution, pixelated, noisy, grainy, out of focus, poorly lit, distorted, amateur, low budget',
+      },
+      logs: false,
+    });
+
+    const data = result.data as { video?: { url?: string } };
+    const videoUrl = data?.video?.url;
+
+    if (!videoUrl) {
+      console.error('Fal video response missing URL:', data);
+      return res.status(500).json({ error: 'No video URL returned from Fal' });
+    }
+
+    return res.json({ videoUrl });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to generate video with Fal';
+    console.error('Fal video generation error:', err);
     return res.status(500).json({ error: message });
   }
 });

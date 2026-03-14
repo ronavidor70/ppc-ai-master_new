@@ -136,6 +136,33 @@ export const openaiService = {
     return data.imageUrl as string;
   },
 
+  async generateAdVideo(prompt: string, options?: { aspectRatio?: string; duration?: number }, lang?: Language): Promise<string> {
+    const body = {
+      prompt: prompt.trim(),
+      aspectRatio: options?.aspectRatio || '16:9',
+      duration: options?.duration ?? 8,
+    };
+
+    const response = await fetch(`${config.apiBaseUrl}/api/creative/video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Creative video API error: ${response.status} ${text}`);
+    }
+
+    const data = await response.json();
+    if (!data.videoUrl) {
+      throw new Error('No videoUrl returned from creative video API');
+    }
+
+    return data.videoUrl as string;
+  },
+
   // Provides platform-specific suggestions for the wizard
   async getPlatformSuggestions(platform: Platform, productDescription: string, lang: Language): Promise<any> {
     const client = getAiClient();
@@ -221,6 +248,30 @@ export const openaiService = {
     
     const content = response.choices[0]?.message?.content || '{}';
     return JSON.parse(content);
+  },
+
+  async generateLandingPageCode(prompt: string): Promise<string> {
+    const response = await fetch(`${config.apiBaseUrl}/api/creative/landing-page`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ prompt: prompt.trim() }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        response.status === 503
+          ? 'ANTHROPIC_API_KEY is not configured on the server'
+          : `Landing page API error: ${response.status} ${text}`
+      );
+    }
+
+    const data = await response.json();
+    if (!data.code) {
+      throw new Error('No code returned from landing page API');
+    }
+    return data.code as string;
   },
 
   async generateLandingPageVariations(topic: string, lang: Language): Promise<Partial<LandingPage>[]> {

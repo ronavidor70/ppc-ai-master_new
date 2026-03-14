@@ -78,6 +78,7 @@ export interface AdCreative {
   description: string;
   cta: string;
   imageUrl?: string;
+  videoUrl?: string;
 }
 
 export interface Campaign {

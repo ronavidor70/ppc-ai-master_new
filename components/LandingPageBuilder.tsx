@@ -1,147 +1,125 @@
 
 import React, { useState } from 'react';
+import { SandpackProvider, SandpackLayout, SandpackPreview } from '@codesandbox/sandpack-react';
 import { useTranslation } from '../App';
-import { Campaign, LandingPage } from '../types';
+import { Campaign } from '../types';
 import { Icons } from '../constants';
 import { openaiService } from '../services/openaiService';
+import { Loader2 } from 'lucide-react';
 
 interface LandingPageBuilderProps {
   campaigns: Campaign[];
 }
 
+const DEFAULT_APP_CODE = `import React from 'react';
+
+export default function App() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+      <p className="text-slate-400">תבנה דף פרימיום עם התיאור שלך</p>
+    </div>
+  );
+}
+`;
+
 const LandingPageBuilder: React.FC<LandingPageBuilderProps> = ({ campaigns }) => {
-  const { t, lang, dir } = useTranslation();
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
+  const { t, lang } = useTranslation();
+  const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [variations, setVariations] = useState<Partial<LandingPage>[]>([]);
-  const [selectedVariation, setSelectedVariation] = useState<Partial<LandingPage> | null>(null);
+  const [generatedCode, setGeneratedCode] = useState<string>(DEFAULT_APP_CODE);
+  const [error, setError] = useState<string | null>(null);
 
   const handleGenerate = async () => {
-    const campaign = campaigns.find(c => c.id === selectedCampaignId);
-    const topic = campaign ? campaign.objective : "Digital Marketing Services";
-    
+    if (!prompt.trim() || isGenerating) return;
+    setError(null);
     setIsGenerating(true);
     try {
-      const results = await openaiService.generateLandingPageVariations(topic, lang);
-      setVariations(results);
-    } catch (error) {
-      console.error(error);
+      const code = await openaiService.generateLandingPageCode(prompt);
+      setGeneratedCode(code);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
     } finally {
       setIsGenerating(false);
     }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">{t('landingPages')}</h2>
-          <p className="text-slate-500 text-sm">{t('lpSub')}</p>
-        </div>
-        <div className="flex gap-2">
-          <select 
-            value={selectedCampaignId}
-            onChange={(e) => setSelectedCampaignId(e.target.value)}
-            className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100"
-          >
-            <option value="">{t('selectCampaign')}</option>
-            {campaigns.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <button 
-            onClick={handleGenerate}
-            disabled={!selectedCampaignId || isGenerating}
-            className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all disabled:opacity-50`}
-          >
-            {isGenerating ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icons.Zap />}
-            {t('generateLP')}
-          </button>
-        </div>
+    <div className="h-[calc(100vh-8rem)] flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex-none mb-4">
+        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{t('landingPages')}</h2>
+        <p className="text-slate-500 text-sm">{t('lpSub')}</p>
       </div>
 
-      {variations.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {variations.map((v, i) => (
-            <div 
-              key={i}
-              onClick={() => setSelectedVariation(v)}
-              className={`p-6 bg-white rounded-3xl border-2 transition-all cursor-pointer group hover:shadow-xl ${
-                selectedVariation === v ? 'border-blue-600 ring-2 ring-blue-50' : 'border-slate-100'
-              }`}
-            >
-              <div className="w-full h-32 bg-slate-50 rounded-2xl mb-4 border border-slate-100 flex items-center justify-center text-slate-300">
-                <Icons.Browser />
-              </div>
-              <h4 className="font-bold text-slate-800 mb-2">{v.title}</h4>
-              <p className="text-xs text-slate-500 line-clamp-3 mb-4">{v.content?.hero.subtitle}</p>
-              <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600">
-                <Icons.CheckCircle />
-                UTM & PIXEL AUTO-SYNCED
-              </div>
-            </div>
-          ))}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
+        {/* Left: Sandpack Live Preview */}
+        <div className="lg:col-span-2 rounded-3xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm min-h-[400px] lg:min-h-0 flex flex-col order-2 lg:order-1">
+          <SandpackProvider
+            template="react"
+            theme="light"
+            options={{
+              externalResources: ['https://cdn.tailwindcss.com'],
+            }}
+            customSetup={{
+              dependencies: { 'lucide-react': 'latest' },
+            }}
+            files={{
+              '/App.js': generatedCode,
+            }}
+          >
+            <SandpackLayout>
+              <SandpackPreview
+                showNavigator={false}
+                showRefreshButton
+                className="min-h-[400px] !rounded-none"
+              />
+            </SandpackLayout>
+          </SandpackProvider>
         </div>
-      )}
 
-      {selectedVariation && (
-        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-          <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                <div className="w-3 h-3 rounded-full bg-green-500"></div>
-              </div>
-              <div className="ml-4 px-4 py-1 bg-white/10 rounded-lg text-xs font-mono opacity-60">
-                https://ppc-master.ai/lp/{selectedVariation.title?.toLowerCase().replace(/\s+/g, '-')}?utm_campaign={selectedCampaignId}&pixel=active
-              </div>
+        {/* Right: Settings / Chat */}
+        <div className="lg:col-span-1 flex flex-col gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm h-fit lg:h-full order-1 lg:order-2">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
+            {lang === 'he' ? 'תאר את העסק או הדף שברצונך' : 'Describe your business or page'}
+          </label>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={lang === 'he' ? 'לדוגמה: תבנה דף לקליניקה לטיפולים משלימים, עם Hero, Features ו-CTA' : 'e.g. Build a page for a holistic clinic with Hero, Features and CTA'}
+            className="w-full flex-1 min-h-[160px] px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 resize-none"
+            dir="auto"
+          />
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-xs font-bold text-red-600">
+              {error}
             </div>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all">
-              {t('publish')}
-            </button>
-          </div>
-          
-          <div className="p-8 md:p-16 text-center space-y-8 min-h-[500px] flex flex-col justify-center bg-gradient-to-b from-white to-slate-50">
-            <div className="space-y-4 max-w-2xl mx-auto">
-              <h1 className="text-4xl md:text-5xl font-black text-slate-900 leading-tight">
-                {selectedVariation.content?.hero.title}
-              </h1>
-              <p className="text-lg text-slate-600">
-                {selectedVariation.content?.hero.subtitle}
-              </p>
-            </div>
-            
-            <div className="flex justify-center">
-              <button className="px-8 py-4 bg-blue-600 text-white text-lg font-bold rounded-2xl shadow-2xl shadow-blue-200 hover:scale-105 transition-all">
-                {selectedVariation.content?.hero.cta}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-16">
-              {selectedVariation.content?.features.map((f, i) => (
-                <div key={i} className="text-start space-y-2">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-                    <Icons.CheckCircle />
-                  </div>
-                  <h5 className="font-bold text-slate-800">{f.title}</h5>
-                  <p className="text-sm text-slate-500">{f.description}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
+          <button
+            onClick={handleGenerate}
+            disabled={!prompt.trim() || isGenerating}
+            className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black shadow-2xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:hover:scale-100"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="uppercase tracking-widest">
+                  {lang === 'he' ? 'מייצר...' : 'Generating...'}
+                </span>
+              </>
+            ) : (
+              <>
+                <Icons.Sparkles className="w-5 h-5" />
+                <span className="uppercase tracking-widest">
+                  {lang === 'he' ? 'צור דף פרימיום' : 'Create Premium Page'}
+                </span>
+              </>
+            )}
+          </button>
+          <p className="text-[9px] text-center text-slate-400 uppercase font-black tracking-tighter">
+            Claude 3.5 Sonnet · React + Tailwind · Live Preview
+          </p>
         </div>
-      )}
-
-      {!variations.length && !isGenerating && (
-        <div className="py-32 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
-          <div className="inline-flex p-6 bg-slate-50 rounded-full text-slate-300 mb-4">
-            <Icons.Browser />
-          </div>
-          <h3 className="text-lg font-bold text-slate-400">{t('createLP')}</h3>
-          <p className="text-sm text-slate-300 mt-2">Select a campaign above to start generating pages.</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
