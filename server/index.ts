@@ -28,6 +28,10 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Required for Render (and any reverse-proxy PaaS): lets Express trust the
+// X-Forwarded-* headers so that req.secure is correct and HTTPS cookies work.
+app.set('trust proxy', 1);
+
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -99,13 +103,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // הוספתי - חשוב ל-OAuth callbacks
 
 // Session setup
+const isProduction = process.env.NODE_ENV === 'production';
 app.use(sessionMiddleware({
   secret: sessionSecret || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: false,
-    httpOnly: true, 
+  cookie: {
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: isProduction ? 'none' : 'lax',
     maxAge: 24 * 60 * 60 * 1000
   }
 }));

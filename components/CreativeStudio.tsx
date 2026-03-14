@@ -4,6 +4,7 @@ import { Campaign, AdCreative } from '../types';
 import { Icons } from '../constants';
 import { openaiService } from '../services/openaiService';
 import html2canvas from 'html2canvas';
+import { useData } from '../contexts/DataContext';
 
 type CreativeMode = 'image' | 'video';
 
@@ -13,6 +14,7 @@ interface CreativeStudioProps {
 }
 
 const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreative }) => {
+  const { isConnected } = useData();
   const { t, lang, dir } = useTranslation();
   const [mode, setMode] = useState<CreativeMode>('image');
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
@@ -37,6 +39,12 @@ const CreativeStudio: React.FC<CreativeStudioProps> = ({ campaigns, onAddCreativ
 
   const handleGenerate = async () => {
     if (!prompt || isGenerating) return;
+    if (!isConnected) {
+      setError(lang === 'he'
+        ? 'יש להתחבר עם חשבון Facebook לפני יצירת קריאייטיב.'
+        : 'Please connect your Facebook account before generating creative.');
+      return;
+    }
     setError(null);
     setGeneratedImageUrl(null);
     setGeneratedVideoUrl(null);
